@@ -1,0 +1,42 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: union_engage
+      POSTGRES_USER: union
+      POSTGRES_PASSWORD: union
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U union -d union_engage"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://union:union@db:5432/union_engage
+      JWT_SECRET: local-demo-secret
+      AI_PROVIDER: sarvam
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      SARVAM_BASE_URL: https://api.sarvam.ai
+      SARVAM_CHAT_MODEL: sarvam-105b-conversations
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: llama3:latest
+      OLLAMA_TIMEOUT_SECONDS: 90
+      OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
+      OLLAMA_EMBEDDING_TIMEOUT_SECONDS: 180
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api
+    ports: ["3000:3000"]
+    depends_on: [backend]
+volumes:
+  postgres_data:

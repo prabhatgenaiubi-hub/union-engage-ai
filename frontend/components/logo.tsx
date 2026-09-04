@@ -1,0 +1,2 @@
+import {Landmark} from "lucide-react";
+export function Logo({light=false}:{light?:boolean}){return <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-xl bg-brand text-white"><Landmark size={22}/></div><div><div className={`font-bold ${light?"text-white":"text-navy"}`}>Union Engage AI</div><div className={`text-[10px] ${light?"text-slate-300":"text-slate-500"}`}>Intelligent Customer Engagement Platform</div></div></div>}

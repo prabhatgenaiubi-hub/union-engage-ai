@@ -1,0 +1,10 @@
+.env
+*.db
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+frontend/node_modules/
+frontend/.next/
+frontend/.npm-cache/
+postgres_data/
