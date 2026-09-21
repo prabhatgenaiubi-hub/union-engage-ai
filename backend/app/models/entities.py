@@ -23,6 +23,8 @@ class Customer(Base, TimestampMixin):
     id: Mapped[int]=mapped_column(primary_key=True)
     customer_code: Mapped[str]=mapped_column(String(20), unique=True, index=True)
     name: Mapped[str]=mapped_column(String(100))
+    phone_number: Mapped[str]=mapped_column(String(20), default="")
+    email_address: Mapped[str]=mapped_column(String(120), default="")
     segment: Mapped[str]=mapped_column(String(30), default="Classic")
     city: Mapped[str]=mapped_column(String(60))
     relationship_since: Mapped[str]=mapped_column(String(10))
@@ -30,6 +32,30 @@ class Customer(Base, TimestampMixin):
     monthly_income: Mapped[float]=mapped_column(Float, default=0)
     monthly_surplus: Mapped[float]=mapped_column(Float, default=0)
     rm_name: Mapped[str]=mapped_column(String(100), default="Ananya Rao")
+    profile_verified: Mapped[bool]=mapped_column(Boolean, default=True)
+    kyc_status: Mapped[str]=mapped_column(String(30), default="Up to date")
+    kyc_updated_at: Mapped[datetime|None]=mapped_column(DateTime, nullable=True)
+    trusted_customer: Mapped[bool]=mapped_column(Boolean, default=True)
+
+class BankAccount(Base, TimestampMixin):
+    __tablename__="bank_accounts"
+    id: Mapped[int]=mapped_column(primary_key=True)
+    customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
+    account_number: Mapped[str]=mapped_column(String(30), unique=True, index=True)
+    account_type: Mapped[str]=mapped_column(String(40), default="Savings Account")
+    balance: Mapped[float]=mapped_column(Float, default=0)
+    status: Mapped[str]=mapped_column(String(20), default="Active")
+
+class AccountTransaction(Base):
+    __tablename__="account_transactions"
+    id: Mapped[int]=mapped_column(primary_key=True)
+    account_id: Mapped[int]=mapped_column(ForeignKey("bank_accounts.id"), index=True)
+    transaction_date: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow, index=True)
+    description: Mapped[str]=mapped_column(String(160))
+    reference: Mapped[str]=mapped_column(String(40), unique=True)
+    debit: Mapped[float]=mapped_column(Float, default=0)
+    credit: Mapped[float]=mapped_column(Float, default=0)
+    balance: Mapped[float]=mapped_column(Float, default=0)
 
 class Conversation(Base, TimestampMixin):
     __tablename__="conversations"
@@ -65,6 +91,9 @@ class ServiceRequest(Base, TimestampMixin):
     customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     conversation_id: Mapped[int|None]=mapped_column(ForeignKey("conversations.id"), nullable=True)
     category: Mapped[str]=mapped_column(String(60)); issue: Mapped[str]=mapped_column(String(200)); priority: Mapped[str]=mapped_column(String(20)); status: Mapped[str]=mapped_column(String(30), default="Open")
+    assigned_queue: Mapped[str]=mapped_column(String(50),default="Standard Queue")
+    escalation_level: Mapped[str]=mapped_column(String(30),default="None")
+    routing_reason: Mapped[str]=mapped_column(Text,default="")
 
 class ServiceRequestComment(Base):
     __tablename__="service_request_comments"
@@ -90,28 +119,55 @@ class Lead(Base, TimestampMixin):
     product: Mapped[str]=mapped_column(String(60)); score: Mapped[int]=mapped_column(Integer); temperature: Mapped[str]=mapped_column(String(20))
     journey_stage: Mapped[str]=mapped_column(String(50), default="Interest"); status: Mapped[str]=mapped_column(String(30), default="New")
     next_action: Mapped[str]=mapped_column(String(120), default="Follow up"); reasons: Mapped[list]=mapped_column(JSON, default=list)
+    qualification_data: Mapped[dict]=mapped_column(JSON,default=dict)
+    drop_off_detected: Mapped[bool]=mapped_column(Boolean,default=False)
 
 class FinancialGoal(Base, TimestampMixin):
     __tablename__="financial_goals"
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     name: Mapped[str]=mapped_column(String(80)); target_amount: Mapped[float]=mapped_column(Float); saved_amount: Mapped[float]=mapped_column(Float, default=0)
     timeline_months: Mapped[int]=mapped_column(Integer); monthly_required: Mapped[float]=mapped_column(Float)
+    conversation_id: Mapped[int|None]=mapped_column(ForeignKey("conversations.id"),nullable=True,index=True)
+    monthly_income: Mapped[float]=mapped_column(Float,default=0)
+    monthly_expenses: Mapped[float]=mapped_column(Float,default=0)
+    status: Mapped[str]=mapped_column(String(30),default="Planning")
+    coaching_plan: Mapped[dict]=mapped_column(JSON,default=dict)
 
 class Opportunity(Base, TimestampMixin):
     __tablename__="product_opportunities"
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     product: Mapped[str]=mapped_column(String(60)); score: Mapped[int]=mapped_column(Integer); reason: Mapped[str]=mapped_column(Text)
     trigger: Mapped[str]=mapped_column(String(100)); suggested_action: Mapped[str]=mapped_column(String(160)); status: Mapped[str]=mapped_column(String(30), default="Pending Review")
+    communication_draft: Mapped[str]=mapped_column(Text,default="")
+    generated_by: Mapped[str]=mapped_column(String(40),default="rules")
+    reviewed_by: Mapped[int|None]=mapped_column(ForeignKey("users.id"),nullable=True)
+    reviewed_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 
 class RetentionScore(Base, TimestampMixin):
     __tablename__="retention_scores"
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     score: Mapped[int]=mapped_column(Integer); level: Mapped[str]=mapped_column(String(20)); reasons: Mapped[list]=mapped_column(JSON, default=list); suggested_action: Mapped[str]=mapped_column(String(160))
+    case_type: Mapped[str]=mapped_column(String(30),default="Retention")
+    status: Mapped[str]=mapped_column(String(30),default="Monitoring")
+    communication_draft: Mapped[str]=mapped_column(Text,default="")
+    reviewed_by: Mapped[int|None]=mapped_column(ForeignKey("users.id"),nullable=True)
+    reviewed_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 
 class RoutingDecision(Base, TimestampMixin):
     __tablename__="routing_decisions"
     id: Mapped[int]=mapped_column(primary_key=True); conversation_id: Mapped[int]=mapped_column(ForeignKey("conversations.id"), index=True)
+    interaction_analysis_id: Mapped[int|None]=mapped_column(ForeignKey("interaction_analysis.id"),nullable=True,index=True)
     current_queue: Mapped[str]=mapped_column(String(50), default="Standard Queue"); recommended_queue: Mapped[str]=mapped_column(String(50)); reason: Mapped[str]=mapped_column(Text); status: Mapped[str]=mapped_column(String(20), default="Recommended")
+    issue: Mapped[str]=mapped_column(String(80),default="General service")
+    urgency: Mapped[str]=mapped_column(String(20),default="Low")
+    sentiment: Mapped[str]=mapped_column(String(30),default="Neutral")
+    repeat_contact: Mapped[bool]=mapped_column(Boolean,default=False)
+    escalation: Mapped[str]=mapped_column(String(30),default="None")
+    service_request_id: Mapped[int|None]=mapped_column(ForeignKey("service_requests.id"),nullable=True)
+    actioned_by: Mapped[int|None]=mapped_column(ForeignKey("users.id"),nullable=True)
+    actioned_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    routed_department: Mapped[str]=mapped_column(String(80),default="")
+    admin_comment: Mapped[str]=mapped_column(Text,default="")
 
 class KnowledgeArticle(Base, TimestampMixin):
     __tablename__="knowledge_articles"

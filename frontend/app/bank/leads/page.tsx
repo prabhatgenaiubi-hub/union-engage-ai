@@ -1,1 +1,1 @@
-import {BankDataPage} from "@/components/bank-data-page";export default function Page(){return <BankDataPage kind="leads"/>}
+import {LeadIntelligence} from "@/components/lead-intelligence";export default function Page(){return <LeadIntelligence/>}

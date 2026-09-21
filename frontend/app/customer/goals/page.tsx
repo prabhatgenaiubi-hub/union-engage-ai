@@ -1,1 +1,1 @@
-import {CustomerListPage} from "@/components/customer-list-page";export default function Page(){return <CustomerListPage kind="financial-goals" title="Financial goals"/>}
+import {FinancialGoals} from "@/components/financial-goals";export default function Page(){return <FinancialGoals/>}

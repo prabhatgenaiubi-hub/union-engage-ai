@@ -1,4 +1,5 @@
 from app.models import Conversation, InteractionAnalysis, RoutingDecision, ServiceRequest
+from app.services.engagement import engagement_decision
 
 def conversation_insights(conversation:Conversation,analyses:list[InteractionAnalysis],routing:RoutingDecision|None,request:ServiceRequest|None,feedback=None)->dict:
     latest=analyses[-1] if analyses else None
@@ -23,6 +24,7 @@ def conversation_insights(conversation:Conversation,analyses:list[InteractionAna
     elif quality=="At Risk": next_action="Arrange priority human follow-up and confirm resolution with the customer"
     elif latest and latest.complaint: next_action="Create or review a service request and provide a response timeline"
     else: next_action="Confirm the answer resolved the query and invite feedback"
+    engagement=engagement_decision(sentiment,conversation.resolution_status,latest.complaint if latest else False,bool(request and request.status not in ["Resolved","Closed"]))
     return {
         "conversation_summary":conversation.summary,
         "customer_issue":conversation.title,
@@ -37,4 +39,5 @@ def conversation_insights(conversation:Conversation,analyses:list[InteractionAna
         "sentiment_progression":[{"sentiment":item.sentiment,"emotion":item.emotion,"score":item.score,"urgency":item.urgency} for item in analyses],
         "feedback":{"csat":feedback.csat,"nps":feedback.nps,"created_at":feedback.created_at} if feedback else None,
         "recommended_route":routing.recommended_queue if routing else "Standard Queue",
+        "engagement":engagement,
     }

@@ -1,1 +1,1 @@
-import {BankDataPage} from "@/components/bank-data-page";export default function Page(){return <BankDataPage kind="retention"/>}
+import {RetentionManager} from "@/components/retention-manager";export default function Page(){return <RetentionManager/>}

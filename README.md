@@ -17,11 +17,12 @@ PostgreSQL migrations and the idempotent synthetic seed run automatically in the
 
 | Experience | Login | Password | Role |
 |---|---|---|---|
-| Customer | `CUST001` | `Demo@123` | Customer |
-| Bank | `ADMIN001` | `Demo@123` | Admin |
-| Bank | `RM001` | `Demo@123` | Relationship Manager |
-| Bank | `SO001` | `Demo@123` | Service Officer |
-| Bank | `SALES001` | `Demo@123` | Sales Officer |
+| Customer | `CUST001` | `Customer@001` | Customer |
+| Customer | `CUST002` | `Customer@002` | Customer |
+| Customer | `CUST003` | `Customer@003` | Customer |
+| Bank | `ADMIN001` | `Admin@001` | Admin |
+| Bank | `ADMIN002` | `Admin@002` | Admin |
+| Bank | `ADMIN003` | `Admin@003` | Admin |
 
 ## Local development
 

@@ -1,2 +1,73 @@
-import Link from "next/link";import {Logo} from "@/components/logo";import {ArrowRight,MessageSquareText,ShieldCheck} from "lucide-react";
-export default function Login(){return <main className="min-h-screen bg-white"><header className="mx-auto flex max-w-6xl items-center justify-between p-6"><Logo/><span className="badge bg-amber-50 text-amber-700">Demo / Synthetic Data</span></header><section className="mx-auto grid max-w-6xl gap-12 px-6 py-20 lg:grid-cols-2"><div><p className="mb-4 font-semibold text-brand">ONE CONVERSATION. UNIFIED INTELLIGENCE.</p><h1 className="text-5xl font-bold leading-tight text-navy">Banking engagement that understands the whole customer.</h1><p className="mt-6 max-w-xl text-lg text-slate-600">A conversational experience for customers and an explainable intelligence workspace for bank teams.</p><div className="mt-8 flex gap-4"><Link className="btn-primary" href="/customer-login"><MessageSquareText size={18}/>Customer login</Link><Link className="btn-secondary" href="/bank-login"><ShieldCheck size={18}/>Bank login</Link></div></div><div className="card p-8"><h2 className="text-xl font-bold text-navy">One interaction powers the lifecycle</h2>{["Intent, context and sentiment","Service need and priority routing","Lead qualification and financial goals","Product opportunity and retention risk"].map((x,i)=><div key={x} className="mt-5 flex items-center gap-4"><span className="grid h-9 w-9 place-items-center rounded-full bg-navy text-sm font-bold text-white">{i+1}</span><span>{x}</span><ArrowRight className="ml-auto text-slate-300" size={18}/></div>)}</div></section></main>}
+"use client";
+import "./login.css";
+import {useEffect,useState} from "react";
+import {useRouter} from "next/navigation";
+import {ArrowRight,BarChart3,Eye,EyeOff,LockKeyhole,ShieldCheck,UserRound,UsersRound} from "lucide-react";
+import {api} from "@/lib/api";
+
+type UserType="customer"|"employee";
+type Mode="login"|"register";
+
+export default function Login(){
+ const router=useRouter();
+ const [userType,setUserType]=useState<UserType>("customer");
+ const [mode,setMode]=useState<Mode>("login");
+ const [name,setName]=useState("");
+ const [username,setUsername]=useState("");
+ const [password,setPassword]=useState("");
+ const [confirm,setConfirm]=useState("");
+ const [showPassword,setShowPassword]=useState(false);
+ const [remember,setRemember]=useState(true);
+ const [error,setError]=useState("");
+ const [loading,setLoading]=useState(false);
+
+ useEffect(()=>setUsername(localStorage.getItem("remembered_login")||""),[]);
+
+ function changeMode(next:Mode){
+  setMode(next);setError("");setPassword("");setConfirm("");setShowPassword(false);
+ }
+
+ async function submit(event:React.FormEvent){
+  event.preventDefault();setError("");
+  if(mode==="register"&&password!==confirm){setError("Passwords do not match.");return}
+  setLoading(true);
+  try{
+   const path=mode==="register"?"/auth/register":`/auth/${userType}/login`;
+   const body=mode==="register"?{user_type:userType,display_name:name,login_id:username,password}:{login_id:username,password};
+   const result=await api<any>(path,{method:"POST",body:JSON.stringify(body)});
+   localStorage.setItem("token",result.access_token);localStorage.setItem("user",JSON.stringify(result));
+   if(mode==="login"&&remember)localStorage.setItem("remembered_login",username);
+   else if(mode==="login")localStorage.removeItem("remembered_login");
+   router.push(userType==="customer"?"/customer/dashboard":"/bank/dashboard");
+  }catch(e:any){setError(e.message)}finally{setLoading(false)}
+ }
+
+ const idLabel=userType==="customer"?"Customer ID / Mobile Number":"Employee ID";
+ return <main className="login-page">
+  <div className="wash wash-one"/><div className="wash wash-two"/>
+  <header className="login-header"><div className="engage-brand"><img src="/Union_bank_small_icon.png" alt=""/><div><strong>Union Engage AI</strong><span>Intelligent Customer Engagement Platform</span></div></div></header>
+  <section className="login-layout">
+   <div className="login-intro"><p className="eyebrow">One conversation. A more inclusive tomorrow.</p><h1>Secure access to<br className="desktop-break"/> intelligent banking <em>engagement.</em></h1><p className="intro-copy">One secure platform connecting conversations, insights and banking intelligence for customers and bank teams.</p><div className="benefit-row"><Benefit icon={<UsersRound/>} label={<>Better<br/>conversations</>} tone="red"/><Benefit icon={<BarChart3/>} label={<>Deeper<br/>insights</>} tone="green"/><Benefit icon={<ShieldCheck/>} label={<>Smarter<br/>service</>} tone="red"/></div></div>
+   <div className="building-scene"><img className="bank-building" src="/bank-building.png" alt="Union Bank of India headquarters with the Union Bank logo"/><div className="people-first">People First<br/><span>Always</span><i/></div><p className="building-values"><span>Trust</span><span>People</span><span>Progress</span><i/></p></div><p className="side-motto side-motto-left">Stronger<br/>People<br/>Brighter<br/>Tomorrows</p>
+   <div className="login-panel">
+    <h2>{mode==="login"?"Welcome back":"Create your account"}</h2>
+    <p className="panel-subtitle">{mode==="login"?"Sign in to continue to Union Engage AI":"Register for secure access to Union Engage AI"}</p>
+    <div className="role-switch" role="group" aria-label="Choose account type"><button type="button" onClick={()=>{setUserType("customer");setError("")}} className={userType==="customer"?"active":""}><UserRound size={20}/>Customer</button><button type="button" onClick={()=>{setUserType("employee");setError("")}} className={userType==="employee"?"active":""}><ShieldCheck size={20}/>Bank Employee</button></div>
+    <form onSubmit={submit}>
+     {mode==="register"&&<label>Full Name<span className="input-wrap"><UserRound size={21}/><input autoComplete="name" placeholder="Enter your full name" value={name} onChange={e=>setName(e.target.value)} required minLength={2}/></span></label>}
+     <label>{idLabel}<span className="input-wrap"><UserRound size={21}/><input autoComplete="username" placeholder={userType==="customer"?"Enter customer ID or mobile number":"Enter employee ID"} value={username} onChange={e=>setUsername(e.target.value)} required minLength={3}/></span></label>
+     <label>Password<span className="input-wrap"><LockKeyhole size={20}/><input type={showPassword?"text":"password"} autoComplete={mode==="login"?"current-password":"new-password"} placeholder={mode==="login"?"Enter your password":"Minimum 8 characters"} value={password} onChange={e=>setPassword(e.target.value)} required minLength={mode==="register"?8:4}/><button type="button" className="password-toggle" aria-label={showPassword?"Hide password":"Show password"} onClick={()=>setShowPassword(v=>!v)}>{showPassword?<EyeOff size={21}/>:<Eye size={21}/>}</button></span></label>
+     {mode==="register"&&<label>Confirm Password<span className="input-wrap"><LockKeyhole size={20}/><input type={showPassword?"text":"password"} autoComplete="new-password" placeholder="Re-enter your password" value={confirm} onChange={e=>setConfirm(e.target.value)} required minLength={8}/></span></label>}
+     {mode==="login"&&<div className="form-options"><label className="remember"><input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)}/><span>Remember me</span></label><button type="button" className="forgot" onClick={()=>setError("Please contact your bank administrator to reset your password.")}>Forgot password?</button></div>}
+     {error&&<p role="alert" className="login-error">{error}</p>}
+     <button className="sign-in" disabled={loading}>{loading?"Please wait…":mode==="login"?"Sign in securely":"Create account"}<ArrowRight size={22}/></button>
+    </form>
+    <div className="divider"><span/>OR<span/></div>
+    <button type="button" className="microsoft-button" onClick={()=>changeMode(mode==="login"?"register":"login")}>{mode==="login"?"Register a new account":"Already registered? Sign in"}</button>
+    <p className="secure-note"><LockKeyhole size={15}/>Secure banking access</p>
+   </div>
+  </section>
+  <footer><span>© Union Bank of India</span><nav><a href="#">Privacy</a><i/><a href="#">Help</a></nav></footer>
+ </main>
+}
+function Benefit({icon,label,tone}:{icon:React.ReactNode;label:React.ReactNode;tone:"red"|"green"}){return <div className="benefit"><span className={tone}>{icon}</span><b>{label}</b></div>}

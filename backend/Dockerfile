@@ -6,3 +6,5 @@ COPY . .
 CMD ["sh", "-c", "alembic upgrade head && python -m app.seed.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
 
+
+

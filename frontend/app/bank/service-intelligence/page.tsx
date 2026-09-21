@@ -1,1 +1,1 @@
-import {BankDataPage} from "@/components/bank-data-page";export default function Page(){return <BankDataPage kind="service-intelligence"/>}
+import {ServiceRoutingManager} from "@/components/service-routing-manager";export default function Page(){return <ServiceRoutingManager/>}

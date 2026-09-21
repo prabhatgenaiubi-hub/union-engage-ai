@@ -1,1 +1,1 @@
-import {BankDataPage} from "@/components/bank-data-page";export default function Page(){return <BankDataPage kind="customers"/>}
+import {CustomerDirectory} from "@/components/customer-directory";export default function Page(){return <CustomerDirectory/>}
