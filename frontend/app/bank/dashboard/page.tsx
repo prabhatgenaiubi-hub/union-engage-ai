@@ -1,14 +1,14 @@
 "use client";
 import {useEffect,useState} from "react";
 import {api} from "@/lib/api";
-import {AlertTriangle,ArrowRight,Heart,Lightbulb,MessageSquareText,ShieldAlert,Star,TrendingUp,Users,UserRoundCheck,ClipboardList} from "lucide-react";
+import {AlertTriangle,ArrowRight,Lightbulb,MessageSquareText,ShieldAlert,Star,TrendingUp,Users,UserRoundCheck,ClipboardList} from "lucide-react";
 import {ResponsiveContainer,AreaChart,Area,XAxis,YAxis,Tooltip,BarChart,Bar,CartesianGrid,Cell} from "recharts";
 
 export default function Page(){
  const [d,setD]=useState<any>();
  const [employeeName,setEmployeeName]=useState("Bank Admin");
  const [greeting,setGreeting]=useState("Hello");
- useEffect(()=>{api("/dashboard").then(setD).catch(()=>{});try{const user=JSON.parse(localStorage.getItem("user")||"{}");setEmployeeName(user.display_name?.split(" ")[0]||"Bank Admin")}catch{}const hour=new Date().getHours();setGreeting(hour<12?"Good morning":hour<17?"Good afternoon":"Good evening")},[]);
+ useEffect(()=>{let active=true;const load=()=>api("/dashboard").then(value=>{if(active)setD(value)}).catch(()=>{});void load();const timer=window.setInterval(()=>{if(document.visibilityState==="visible")void load()},15000);try{const user=JSON.parse(localStorage.getItem("user")||"{}");setEmployeeName(user.display_name?.split(" ")[0]||"Bank Admin")}catch{}const hour=new Date().getHours();setGreeting(hour<12?"Good morning":hour<17?"Good afternoon":"Good evening");return()=>{active=false;window.clearInterval(timer)}},[]);
  if(!d)return <div className="bank-loading">Loading intelligence dashboard…</div>;
  const k=d.kpis;
  const stats=[
@@ -19,10 +19,9 @@ export default function Page(){
   [Users,"Total Customers",k.active_customers,"","5%","blue"],
   [AlertTriangle,"Pending Priority Escalations",k.priority_escalations,"","0%","red"],
   [Star,"Average CSAT",`${k.csat}/5`,"","25%","blue"],
-  [Heart,"NPS Estimate",k.nps>0?`+${k.nps}`:k.nps,"","0%","purple"],
  ] as const;
  return <div className="executive-dashboard">
-  <section className="executive-heading"><div><h1>Executive dashboard</h1><p>Unified customer engagement intelligence at a glance.</p></div><em>People. Progress. Prosperity.<i/></em></section>
+  <section className="executive-heading"><div><h1>Executive dashboard</h1><p>Unified customer engagement intelligence at a glance.</p></div><em>Building Trust, Empowering India<i/></em></section>
   <section className="executive-insight"><div className="mini-bot"><span>⌣</span></div><div><h2>{greeting}, {employeeName}!</h2><p>Here’s your latest customer engagement overview. You’re on track to deliver a better banking experience.</p></div><div className="ai-insight"><span><Lightbulb/></span><div><b>AI Insight</b><p>Conversations are up 25% this week. Keep the momentum going!</p></div><ArrowRight/></div></section>
   <section className="executive-stats">{stats.map(([Icon,label,value,note,change,tone])=><Kpi key={label} icon={<Icon/>} label={label} value={value} note={note} change={change} tone={tone}/>)}</section>
   <section className="executive-charts">

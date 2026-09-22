@@ -76,6 +76,40 @@ class Message(Base):
     content: Mapped[str]=mapped_column(Text)
     created_at: Mapped[datetime]=mapped_column(DateTime, default=datetime.utcnow)
 
+class PublicConversation(Base, TimestampMixin):
+    __tablename__="public_conversations"
+    id: Mapped[int]=mapped_column(primary_key=True)
+    session_token: Mapped[str]=mapped_column(String(64),unique=True,index=True)
+    title: Mapped[str]=mapped_column(String(160),default="Public enquiry")
+    pending_product: Mapped[str]=mapped_column(String(60),default="")
+    pending_question: Mapped[str]=mapped_column(Text,default="")
+    contact_step: Mapped[str]=mapped_column(String(20),default="")
+    contact_declined: Mapped[bool]=mapped_column(Boolean,default=False)
+    contact_name: Mapped[str]=mapped_column(String(100),default="")
+    contact_phone: Mapped[str]=mapped_column(String(20),default="")
+    contact_email: Mapped[str]=mapped_column(String(120),default="")
+    messages: Mapped[list["PublicMessage"]]=relationship(cascade="all, delete-orphan",order_by="PublicMessage.id")
+
+class PublicMessage(Base):
+    __tablename__="public_messages"
+    id: Mapped[int]=mapped_column(primary_key=True)
+    conversation_id: Mapped[int]=mapped_column(ForeignKey("public_conversations.id"),index=True)
+    role: Mapped[str]=mapped_column(String(20))
+    content: Mapped[str]=mapped_column(Text)
+    sources: Mapped[list]=mapped_column(JSON,default=list)
+    created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class PublicLead(Base, TimestampMixin):
+    __tablename__="public_leads"
+    id: Mapped[int]=mapped_column(primary_key=True)
+    conversation_id: Mapped[int]=mapped_column(ForeignKey("public_conversations.id"),unique=True,index=True)
+    product: Mapped[str]=mapped_column(String(60))
+    name: Mapped[str]=mapped_column(String(100))
+    phone: Mapped[str]=mapped_column(String(20))
+    email: Mapped[str]=mapped_column(String(120))
+    status: Mapped[str]=mapped_column(String(30),default="New")
+    source: Mapped[str]=mapped_column(String(40),default="Public login assistant")
+
 class InteractionAnalysis(Base):
     __tablename__="interaction_analysis"
     id: Mapped[int]=mapped_column(primary_key=True)
@@ -137,7 +171,7 @@ class Opportunity(Base, TimestampMixin):
     __tablename__="product_opportunities"
     id: Mapped[int]=mapped_column(primary_key=True); customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     product: Mapped[str]=mapped_column(String(60)); score: Mapped[int]=mapped_column(Integer); reason: Mapped[str]=mapped_column(Text)
-    trigger: Mapped[str]=mapped_column(String(100)); suggested_action: Mapped[str]=mapped_column(String(160)); status: Mapped[str]=mapped_column(String(30), default="Pending Review")
+    trigger: Mapped[str]=mapped_column(Text); suggested_action: Mapped[str]=mapped_column(Text); status: Mapped[str]=mapped_column(String(30), default="Pending Review")
     communication_draft: Mapped[str]=mapped_column(Text,default="")
     generated_by: Mapped[str]=mapped_column(String(40),default="rules")
     reviewed_by: Mapped[int|None]=mapped_column(ForeignKey("users.id"),nullable=True)

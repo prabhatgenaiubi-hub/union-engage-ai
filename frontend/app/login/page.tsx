@@ -4,6 +4,7 @@ import {useEffect,useState} from "react";
 import {useRouter} from "next/navigation";
 import {ArrowRight,BarChart3,Eye,EyeOff,LockKeyhole,ShieldCheck,UserRound,UsersRound} from "lucide-react";
 import {api} from "@/lib/api";
+import {FloatingAiAssistant} from "@/components/floating-ai-assistant";
 
 type UserType="customer"|"employee";
 type Mode="login"|"register";
@@ -45,13 +46,13 @@ export default function Login(){
  const idLabel=userType==="customer"?"Customer ID / Mobile Number":"Employee ID";
  return <main className="login-page">
   <div className="wash wash-one"/><div className="wash wash-two"/>
-  <header className="login-header"><div className="engage-brand"><img src="/Union_bank_small_icon.png" alt=""/><div><strong>Union Engage AI</strong><span>Intelligent Customer Engagement Platform</span></div></div></header>
+  <header className="login-header"><div className="engage-brand"><img src="/Union_bank_small_icon.png" alt=""/><div><strong>Union Engage</strong><span>Intelligent Customer Engagement Platform</span></div></div></header>
   <section className="login-layout">
-   <div className="login-intro"><p className="eyebrow">One conversation. A more inclusive tomorrow.</p><h1>Secure access to<br className="desktop-break"/> intelligent banking <em>engagement.</em></h1><p className="intro-copy">One secure platform connecting conversations, insights and banking intelligence for customers and bank teams.</p><div className="benefit-row"><Benefit icon={<UsersRound/>} label={<>Better<br/>conversations</>} tone="red"/><Benefit icon={<BarChart3/>} label={<>Deeper<br/>insights</>} tone="green"/><Benefit icon={<ShieldCheck/>} label={<>Smarter<br/>service</>} tone="red"/></div></div>
-   <div className="building-scene"><img className="bank-building" src="/bank-building.png" alt="Union Bank of India headquarters with the Union Bank logo"/><div className="people-first">People First<br/><span>Always</span><i/></div><p className="building-values"><span>Trust</span><span>People</span><span>Progress</span><i/></p></div><p className="side-motto side-motto-left">Stronger<br/>People<br/>Brighter<br/>Tomorrows</p>
+   <div className="login-intro"><p className="eyebrow">100+ Years of Trust &amp; Service</p><h1>Secure access to<br className="desktop-break"/> intelligent banking <em>engagement.</em></h1><p className="intro-copy">Digital Banking with a Personal Touch—connecting conversations, insights and banking intelligence for customers and bank teams.</p><div className="benefit-row"><Benefit icon={<UsersRound/>} label={<>Better<br/>conversations</>} tone="red"/><Benefit icon={<BarChart3/>} label={<>Deeper<br/>insights</>} tone="green"/><Benefit icon={<ShieldCheck/>} label={<>Smarter<br/>service</>} tone="red"/></div></div>
+   <div className="building-scene"><img className="bank-building" src="/bank-building.png" alt="Union Bank of India headquarters with the Union Bank logo"/><div className="people-first">Hum Wahi Hain<br/><span>हम वही हैं</span><i/></div></div><p className="side-motto side-motto-left">Good people<br/>to bank with<br/>अच्छे लोग<br/>अच्छा बैंक</p>
    <div className="login-panel">
     <h2>{mode==="login"?"Welcome back":"Create your account"}</h2>
-    <p className="panel-subtitle">{mode==="login"?"Sign in to continue to Union Engage AI":"Register for secure access to Union Engage AI"}</p>
+    <p className="panel-subtitle">{mode==="login"?"Sign in to continue to Union Engage":"Register for secure access to Union Engage"}</p>
     <div className="role-switch" role="group" aria-label="Choose account type"><button type="button" onClick={()=>{setUserType("customer");setError("")}} className={userType==="customer"?"active":""}><UserRound size={20}/>Customer</button><button type="button" onClick={()=>{setUserType("employee");setError("")}} className={userType==="employee"?"active":""}><ShieldCheck size={20}/>Bank Employee</button></div>
     <form onSubmit={submit}>
      {mode==="register"&&<label>Full Name<span className="input-wrap"><UserRound size={21}/><input autoComplete="name" placeholder="Enter your full name" value={name} onChange={e=>setName(e.target.value)} required minLength={2}/></span></label>}
@@ -68,6 +69,7 @@ export default function Login(){
    </div>
   </section>
   <footer><span>© Union Bank of India</span><nav><a href="#">Privacy</a><i/><a href="#">Help</a></nav></footer>
+  <FloatingAiAssistant/>
  </main>
 }
 function Benefit({icon,label,tone}:{icon:React.ReactNode;label:React.ReactNode;tone:"red"|"green"}){return <div className="benefit"><span className={tone}>{icon}</span><b>{label}</b></div>}

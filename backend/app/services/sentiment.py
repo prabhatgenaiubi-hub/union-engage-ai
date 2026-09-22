@@ -3,6 +3,7 @@ from app.services.engagement import engagement_decision
 
 def conversation_insights(conversation:Conversation,analyses:list[InteractionAnalysis],routing:RoutingDecision|None,request:ServiceRequest|None,feedback=None)->dict:
     latest=analyses[-1] if analyses else None
+    messages_by_id={message.id:message for message in conversation.messages}
     sentiment=latest.sentiment if latest else conversation.sentiment
     if sentiment=="Highly Negative": quality="At Risk"
     elif sentiment=="Negative": quality="Poor"
@@ -36,7 +37,7 @@ def conversation_insights(conversation:Conversation,analyses:list[InteractionAna
         "dissatisfaction_reasons":reasons,
         "customer_expectation":expectation,
         "suggested_next_action":next_action,
-        "sentiment_progression":[{"sentiment":item.sentiment,"emotion":item.emotion,"score":item.score,"urgency":item.urgency} for item in analyses],
+        "sentiment_progression":[{"sentiment":item.sentiment,"emotion":item.emotion,"score":item.score,"urgency":item.urgency,"intent":item.intent,"message":messages_by_id[item.message_id].content if item.message_id in messages_by_id else "","updated_at":messages_by_id[item.message_id].created_at if item.message_id in messages_by_id else None} for item in analyses],
         "feedback":{"csat":feedback.csat,"nps":feedback.nps,"created_at":feedback.created_at} if feedback else None,
         "recommended_route":routing.recommended_queue if routing else "Standard Queue",
         "engagement":engagement,

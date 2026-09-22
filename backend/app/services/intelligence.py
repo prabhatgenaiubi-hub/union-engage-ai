@@ -39,16 +39,21 @@ class MockAIProvider:
         dispute=any(x in t for x in ["wrongly debited","wrong debit","debit dispute"])
         card=any(x in t for x in ["debit card","atm card","card"])
         card_issue=card and any(x in t for x in ["not working","not been working","isn't working","is not working","doesn't work","does not work","stopped working","failed","declined","kaam nahi","काम नहीं"])
+        digital=any(x in t for x in ["internet banking","net banking","online banking","banking portal","mobile banking","login","log in"])
+        digital_issue=digital and any(x in t for x in ["not working","not been working","isn't working","is not working","doesn't work","does not work","unable","cannot","can't","invalid credentials","error","failed","blocked","locked"])
         cheque=any(x in t for x in ["cheque book","chequebook","check book","चेकबुक"])
         balance=any(x in t for x in ["minimum balance","min balance","average monthly balance","amb","न्यूनतम बैलेंस"])
         home=any(x in t for x in ["home loan","buy a house","buying a house","ghar"])
         home_info=home and any(x in t for x in ["document","required","requirement","how","what","eligibility","दस्तावेज","कागज़"])
         coach=any(x in t for x in ["want to save","save for","saving plan","savings plan","financial goal","financial coach","plan my finances","help me save","monthly budget","money goal","emergency fund","can i afford","plan to buy a home","buy a home","monthly and want","bachat","budget bana"])
-        angry=closure or (repeat and any(x in t for x in ["not solved","nobody","helped","failed"]))
-        complaint=card_issue or dispute or repeat or closure
-        intent="Account Closure" if closure else "Debit Dispute" if dispute else "Debit Card Complaint" if card_issue else "Debit Card Information" if card else "Cheque Book Information" if cheque else "Minimum Balance Information" if balance else "Home Loan Information" if home_info else "Financial Coaching" if coach else "Home Loan Interest" if home else "Banking Query"
-        sentiment="Highly Negative" if angry or (dispute and repeat) else "Negative" if complaint else "Positive" if "thank" in t else "Neutral"
-        emotion="Angry" if closure else "Frustrated" if sentiment=="Highly Negative" else "Concerned" if complaint else "Neutral"
+        positive_service=any(x in t for x in ["very happy","happy with","satisfied","pleased","good service","great service","excellent service","love your service"])
+        negative_service=any(x in t for x in ["very sad","too sad","unhappy","bad with your service","bad with the service","disappointed","poor service","terrible service","stop all of your service","stop your service","cancel all service"])
+        stop_services=any(x in t for x in ["stop all of your service","stop your service","cancel all service"])
+        angry=closure or stop_services or (repeat and any(x in t for x in ["not solved","nobody","helped","failed"]))
+        complaint=card_issue or digital_issue or dispute or negative_service or repeat or closure
+        intent="Account Closure" if closure else "Debit Dispute" if dispute else "Debit Card Complaint" if card_issue else "Digital Banking Complaint" if digital_issue else "Customer Service Complaint" if negative_service else "Debit Card Information" if card else "Cheque Book Information" if cheque else "Minimum Balance Information" if balance else "Home Loan Information" if home_info else "Financial Coaching" if coach else "Home Loan Interest" if home else "Banking Query"
+        sentiment="Highly Negative" if angry or (dispute and repeat) else "Negative" if complaint else "Positive" if positive_service or "thank" in t else "Neutral"
+        emotion="Angry" if closure or stop_services else "Frustrated" if sentiment=="Highly Negative" else "Disappointed" if negative_service else "Concerned" if complaint else "Satisfied" if sentiment=="Positive" else "Neutral"
         urgency="High" if closure or dispute or sentiment=="Highly Negative" else "Medium" if complaint else "Low"
         entities={}
         amounts=re.findall(r"(?:₹|rs\.?\s*)?([0-9]+(?:\.[0-9]+)?)\s*(lakh|lac|crore)?",t)
@@ -80,6 +85,7 @@ class MockAIProvider:
         if a.intent=="Account Closure": return "I’m sorry this experience has brought you to this point. Your concern deserves urgent attention. I can route this to a senior service specialist. Would you like me to raise a service request?"
         if a.intent=="Debit Dispute": return "I’m sorry about the incorrect debit. Please avoid sharing your PIN or OTP here. I can raise a priority service request for supervisor review. Would you like to proceed?"
         if a.intent=="Debit Card Complaint": return "I’m sorry your debit card isn’t working. Please first check that it is enabled in mobile banking. I can help you raise a service request for this issue. Would you like to proceed?"
+        if a.intent=="Digital Banking Complaint": return "I’m sorry you’re unable to access digital banking. I can help you raise a service request for this issue. Please use the confirmation below if you’d like to proceed."
         if a.intent=="Home Loan Interest": return "That’s an exciting goal. I can help you understand the home-loan process and qualify your requirement step by step. What loan amount are you considering?"
         if a.intent=="Financial Coaching": return "I can turn that into a practical savings plan. I’ll use your income, expenses, target amount and timeline to calculate a monthly goal."
         return knowledge or "I can help with accounts, cards, loans, deposits, digital banking and financial goals. Could you share a little more detail?"
@@ -268,7 +274,7 @@ def route(a:Analysis)->tuple[str,str]:
 
 def routing_intelligence(a:Analysis)->dict:
     queue,reason=route(a)
-    issue={"Debit Dispute":"Account debit dispute","Debit Card Complaint":"Debit card service failure","Account Closure":"Account closure/service recovery"}.get(a.intent,a.intent)
+    issue={"Debit Dispute":"Account debit dispute","Debit Card Complaint":"Debit card service failure","Digital Banking Complaint":"Digital banking access failure","Account Closure":"Account closure/service recovery"}.get(a.intent,a.intent)
     escalation="Supervisor" if queue=="Supervisor Review" else "Priority Servicing" if queue=="Priority Service Queue" else "None"
     priority="High" if queue!="Standard Queue" or a.urgency=="High" else "Medium" if a.complaint else "Low"
     return {"queue":queue,"reason":reason,"issue":issue,"urgency":a.urgency,"sentiment":a.sentiment,"repeat_contact":a.repeat,"escalation":escalation,"priority":priority}

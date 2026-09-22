@@ -1,1 +1,1 @@
-import {LoginForm} from "@/components/login-form";export default function Page(){return <LoginForm type="employee"/>}
+import {LoginForm} from "@/components/login-form";import {FloatingAiAssistant} from "@/components/floating-ai-assistant";export default function Page(){return <><LoginForm type="employee"/><FloatingAiAssistant/></>}

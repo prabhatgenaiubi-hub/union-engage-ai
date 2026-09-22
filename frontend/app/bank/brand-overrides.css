@@ -1,0 +1,17 @@
+.bank-signout {
+  bottom: 88px;
+}
+
+.bank-tagline {
+  right: auto;
+  bottom: 22px;
+  left: 28px;
+  width: calc(100% - 56px);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.bank-tagline i {
+  margin-top: 8px;
+}

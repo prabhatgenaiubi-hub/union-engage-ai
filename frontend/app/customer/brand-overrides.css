@@ -1,0 +1,68 @@
+.customer-chat-page::before {
+  content: "GOOD PEOPLE TO BANK WITH";
+  top: auto;
+  right: 24px;
+  bottom: 18px;
+  width: 282px;
+  text-align: center;
+  letter-spacing: .22em;
+}
+
+.customer-chat-page > aside::after {
+  content: "HUM WAHI HAIN\A 100+ YEARS OF\A TRUST & SERVICE";
+}
+
+.sidebar-art {
+  padding-top: 72px;
+}
+
+.sidebar-art > img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 174px;
+  height: auto;
+  margin-bottom: 17px;
+}
+
+.sidebar-art::before {
+  left: 10px;
+  top: 12px;
+  width: 270px;
+  height: 210px;
+  border: 0;
+  border-radius: 0;
+  background: url("/Union_Bank_of_India_Logo.png") center / 250px auto no-repeat;
+  opacity: .055;
+  transform: rotate(-12deg);
+}
+
+.sidebar-art::after {
+  display: none;
+}
+
+.goal-generic-icon {
+  position: absolute;
+  right: 22px;
+  top: 70px;
+  color: #0b65ad;
+  opacity: .13;
+}
+
+.goal-generic-copy {
+  position: relative;
+  max-width: 72%;
+  margin-top: 34px;
+}
+
+.goal-generic-copy b {
+  color: #0b2852;
+  font-size: 20px;
+}
+
+.goal-generic-copy p {
+  margin: 8px 0 0;
+  color: #607994;
+  font-size: 13px;
+  line-height: 1.55;
+}

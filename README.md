@@ -54,6 +54,10 @@ To return to fully deterministic mode, set `AI_PROVIDER=mock`. For a local backe
 
 Admins can upload PDF knowledge from `/bank/admin/knowledge`. The backend extracts page-aware chunks with `pypdf`, generates 768-dimensional vectors using local `nomic-embed-text`, and stores them in PostgreSQL with `pgvector`. Uploaded documents default to internal access; only documents explicitly approved for the customer audience are searched by customer chat. PDF matches are searched before curated article matches and responses include document/page citations.
 
+The login-page assistant stores public conversations separately from signed-in customer chats. Bank employees can review them under **External Chats**. When a visitor expresses product interest, the assistant asks for name, phone, and email before continuing; completed contacts appear under **External Leads**. Visitors can type `Skip` to continue without creating a lead. The public session is resumed in the same browser using a random session token.
+
+The separate public assistant reuses the signed-in assistant's PDF vector retriever and curated article search. It searches a wider pool of customer-approved knowledge, ranks the evidence, and shows document titles and page numbers with grounded replies. Internal-only documents and account data remain unavailable before sign-in.
+
 Rules prioritize complaint resolution over selling, create attrition signals for closure intent, route negative repeat contacts to priority queues, generate leads from product interest, and attach a reason to every internal score or recommendation. Generated communications are never automatically sent.
 
 ## Environment variables

@@ -11,6 +11,8 @@ class CustomerContactUpdate(BaseModel):
     phone_number:str=Field(min_length=8,max_length=20)
     email_address:str=Field(min_length=5,max_length=120)
 class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=2000); conversation_id:int|None=None; language_code:Literal["auto","en-IN","hi-IN","bn-IN","gu-IN","kn-IN","ml-IN","mr-IN","od-IN","pa-IN","ta-IN","te-IN"]="auto"
+class PublicChatTurn(BaseModel): role:Literal["user","assistant"]; content:str=Field(min_length=1,max_length=1000)
+class PublicChatRequest(BaseModel): message:str=Field(min_length=1,max_length=1000); session_id:str|None=Field(default=None,max_length=64); history:list[PublicChatTurn]=Field(default_factory=list,max_length=8)
 class ServiceCreate(BaseModel): conversation_id:int|None=None; category:str; issue:str; priority:str="Medium"
 class ServiceRequestUpdate(BaseModel): status:Literal["Open","In Progress","Awaiting Customer","Resolved","Closed"]
 class ServiceRequestCommentCreate(BaseModel): comment:str=Field(min_length=1,max_length=2000)

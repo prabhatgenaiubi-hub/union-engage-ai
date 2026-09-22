@@ -1,5 +1,6 @@
 import "./customer.css";
 import "./chat.css";
+import "./brand-overrides.css";
 import "./conversations.css";
 import "./requests.css";
 import {CustomerShell} from "@/components/customer-shell";
