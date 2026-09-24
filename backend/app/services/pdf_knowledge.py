@@ -65,3 +65,7 @@ def retrieve_pdf_chunks(db:Session,query:str,audience:str="customer",limit:int=4
         return [{"id":chunk.id,"title":document.title,"category":"PDF Knowledge","content":chunk.content,"page":chunk.page_number,"document_id":document.id,"score":round(max(0,1-float(distance_value)),4)} for chunk,document,distance_value in rows if float(distance_value)<=0.55]
     except Exception:
         return []
+
+def retrieve_engagement_guidance(db:Session,query:str,limit:int=4):
+    """Retrieve only approved guidance reserved for sales and retention drafting."""
+    return retrieve_pdf_chunks(db,query,audience="engagement",limit=limit)

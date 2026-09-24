@@ -31,6 +31,63 @@ def test_repeated_requirements_are_not_saved_as_customer_name(client):
     assert "processing charge" not in answer["message"]
 
 
+def test_external_lead_saves_requested_amount_and_requirement(client, admin_headers):
+    from app.db.session import SessionLocal
+    from app.models import PublicLead
+
+    first = client.post("/api/public/chat", json={"message": "I need a home loan of 50 lakh rupees within 6 months"}).json()
+    session = first["session_id"]
+    for value in ("Asha Sharma", "9876543210", "asha@example.com"):
+        final = client.post("/api/public/chat", json={"message": value, "session_id": session}).json()
+    assert final["contact_step"] == ""
+    with SessionLocal() as db:
+        lead = db.query(PublicLead).one()
+        assert lead.requested_amount == 5_000_000
+        assert "50 lakh" in lead.enquiry
+        assert lead.details["timeline_as_shared"] == "within 6 months"
+        assert lead.details["amount_as_shared"] == "50 lakh rupees"
+    row = client.get("/api/bank/public-leads", headers=admin_headers).json()[0]
+    assert row["requested_amount"] == 5_000_000 and "50 lakh" in row["enquiry"]
+
+
+def test_phone_only_is_saved_when_visitor_skips_email(client, monkeypatch):
+    from app.services import public_chat_session as service
+    from app.db.session import SessionLocal
+    from app.models import PublicLead
+
+    monkeypatch.setattr(service, "_answer", lambda *args: {"message": "General loan information.", "grounded": False, "sources": []})
+    first = client.post("/api/public/chat", json={"message": "I need a personal loan of 10 lakhs"}).json()
+    session = first["session_id"]
+    phone = client.post("/api/public/chat", json={"message": "9876543210", "session_id": session}).json()
+    assert phone["contact_step"] == "email" and "email" in phone["message"].lower()
+    with SessionLocal() as db:
+        lead = db.query(PublicLead).one()
+        assert lead.phone == "9876543210" and lead.email == ""
+        assert lead.requested_amount == 1_000_000
+        assert lead.status == "Contact details incomplete"
+    skipped = client.post("/api/public/chat", json={"message": "Skip", "session_id": session}).json()
+    assert skipped["contact_step"] == "" and "saved" in skipped["message"].lower()
+    with SessionLocal() as db:
+        assert db.query(PublicLead).count() == 1
+
+
+def test_email_first_is_saved_and_bot_asks_for_phone(client, monkeypatch):
+    from app.services import public_chat_session as service
+    from app.db.session import SessionLocal
+    from app.models import PublicLead
+
+    monkeypatch.setattr(service, "_answer", lambda *args: {"message": "General information.", "grounded": False, "sources": []})
+    first = client.post("/api/public/chat", json={"message": "I want a home loan"}).json()
+    session = first["session_id"]
+    email = client.post("/api/public/chat", json={"message": "asha@example.com", "session_id": session}).json()
+    assert email["contact_step"] == "phone" and "phone" in email["message"].lower()
+    client.post("/api/public/chat", json={"message": "Skip", "session_id": session})
+    with SessionLocal() as db:
+        lead = db.query(PublicLead).one()
+        assert lead.email == "asha@example.com" and lead.phone == ""
+        assert lead.status == "Contact details incomplete"
+
+
 def test_information_and_declined_interest_are_not_leads():
     for message in ("Hello", "What documents do I need for a home loan?", "I am not interested in a home loan", "Don't call me about a credit card"):
         assert detect_product_interest(message) is None

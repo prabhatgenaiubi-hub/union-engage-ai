@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "nomic-embed-text:latest"
     ollama_embedding_timeout_seconds: int = 180
     brevo_api_key: str = ""
+    resend_api_key: str = ""
+    resend_from_email: str = "onboarding@resend.dev"
+    resend_from_name: str = "UNION-ENGAGE-AI"
+    resend_timeout_seconds: int = 20
     smtp_from_email: str = ""
     smtp_from_name: str = "UNION-ENGAGE-AI"
     smtp_host: str = "smtp-relay.brevo.com"

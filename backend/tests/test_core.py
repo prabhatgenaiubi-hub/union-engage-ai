@@ -129,7 +129,7 @@ def test_public_followup_does_not_invent_documents(client,monkeypatch):
  monkeypatch.setattr(agent_module.knowledge_retriever,"search",lambda *args,**kwargs:[KnowledgeMatch(1,"Cheque book request","Accounts","You can request a cheque book through mobile banking or a branch.",10)])
  monkeypatch.setattr(agent_module,"retrieve_pdf_chunks",lambda *args,**kwargs:[])
  answer=client.post("/api/public/chat",json={"message":"What documents do I need for that?"}).json()
- assert answer["grounded"] is False and "couldn't find a clear answer" in answer["message"]
+ assert answer["grounded"] is False and answer["message"] == "This information is not available in the current knowledge base."
 def test_public_context_rejects_social_label_for_substantive_questions(monkeypatch):
  from app.services import public_context
  class Response:
@@ -336,6 +336,8 @@ def test_personalized_financial_coaching_plan(client,customer_headers):
  response=client.post("/api/chat",headers=customer_headers,json={"message":"I earn ₹70,000 per month. My expenses are around ₹45,000. I want to save 5 lakh for a car."}).json()
  assert response["analysis"]["intent"]=="Financial Coaching" and response["goal"]["status"]=="Planning" and response["goal"]["next_question"]
  response=client.post("/api/chat",headers=customer_headers,json={"message":"24 months","conversation_id":response["conversation_id"]}).json();goal=response["goal"]
+ for answer in ["0","0","regular","0","0","confirm"]:
+  response=client.post("/api/chat",headers=customer_headers,json={"message":answer,"conversation_id":response["conversation_id"]}).json();goal=response["goal"]
  assert goal["status"]=="Active" and goal["monthly_income"]==70000 and goal["monthly_expenses"]==45000 and goal["target_amount"]==500000 and goal["timeline_months"]==24
  assert goal["plan"]["monthly_surplus"]==25000 and goal["plan"]["emergency_fund_target"]==135000 and goal["plan"]["feasible"] is False and goal["plan"]["guidance"]
  goal_id=client.get("/api/financial-goals",headers=customer_headers).json()[0]["id"]
@@ -367,9 +369,14 @@ def test_approved_opportunity_email_uses_provider(client,customer_headers,admin_
  from app.db.session import SessionLocal
  from app.models import Customer,Opportunity
  db=SessionLocal();customer=db.query(Customer).first();customer.email_address="customer@example.com";item=Opportunity(customer_id=customer.id,product="Fixed Deposit",score=80,reason="Test",trigger="Test",suggested_action="Review",communication_draft="Approved message",status="Approved");db.add(item);db.commit();item_id=item.id;db.close()
- monkeypatch.setattr("app.api.routes.send_transactional_email",lambda *args:"brevo-message-id")
+ captured={}
+ def send(*args):captured["args"]=args;return "provider-message-id"
+ monkeypatch.setattr("app.api.routes.send_transactional_email",send)
  client.post("/api/chat",headers=customer_headers,json={"message":"Thank you, my query is resolved."})
- sent=client.post(f"/api/opportunities/{item_id}/send-email",headers=admin_headers);assert sent.status_code==200 and sent.json()["status"]=="Email Sent" and sent.json()["recipient"]=="customer@example.com"
+ payload={"recipient":"edited@example.com","subject":"A reviewed subject","message":"A reviewed email message"}
+ sent=client.post(f"/api/opportunities/{item_id}/send-email",headers=admin_headers,json=payload)
+ assert sent.status_code==200 and sent.json()["status"]=="Email Sent" and sent.json()["recipient"]=="edited@example.com" and sent.json()["subject"]=="A reviewed subject"
+ assert captured["args"][0]=="edited@example.com" and captured["args"][2:]==("A reviewed subject","A reviewed email message")
 def test_authorization(client,customer_headers): assert client.get("/api/dashboard",headers=customer_headers).status_code==403
 def test_customer_and_employee_self_registration(client):
  customer=client.post("/api/auth/register",json={"user_type":"customer","display_name":"New Customer","login_id":"new.customer","password":"SecurePass123"})

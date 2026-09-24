@@ -10,7 +10,7 @@ class TokenResponse(BaseModel): access_token:str; token_type:str="bearer"; role:
 class CustomerContactUpdate(BaseModel):
     phone_number:str=Field(min_length=8,max_length=20)
     email_address:str=Field(min_length=5,max_length=120)
-class ChatRequest(BaseModel): message:str=Field(min_length=1,max_length=2000); conversation_id:int|None=None; language_code:Literal["auto","en-IN","hi-IN","bn-IN","gu-IN","kn-IN","ml-IN","mr-IN","od-IN","pa-IN","ta-IN","te-IN"]="auto"
+class ChatRequest(BaseModel): mode:Literal["banking","coach"]="banking"; message:str=Field(min_length=1,max_length=2000); conversation_id:int|None=None; language_code:Literal["auto","en-IN","hi-IN","bn-IN","gu-IN","kn-IN","ml-IN","mr-IN","od-IN","pa-IN","ta-IN","te-IN"]="auto"
 class PublicChatTurn(BaseModel): role:Literal["user","assistant"]; content:str=Field(min_length=1,max_length=1000)
 class PublicChatRequest(BaseModel): message:str=Field(min_length=1,max_length=1000); session_id:str|None=Field(default=None,max_length=64); history:list[PublicChatTurn]=Field(default_factory=list,max_length=8)
 class ServiceCreate(BaseModel): conversation_id:int|None=None; category:str; issue:str; priority:str="Medium"
@@ -21,6 +21,10 @@ class FeedbackCreate(BaseModel): conversation_id:int; csat:int|None=Field(None,g
 class KnowledgeCreate(BaseModel): title:str; category:str; keywords:str; content:str; active:bool=True
 class ActionUpdate(BaseModel): status:str
 class OpportunityReview(BaseModel): status:Literal["Pending Review","Approved","Dismissed"]; communication_draft:str=Field(max_length=2000)
+class OpportunityEmailSend(BaseModel):
+    recipient:str=Field(min_length=5,max_length=120,pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    subject:str=Field(min_length=1,max_length=200)
+    message:str=Field(min_length=1,max_length=5000)
 class RetentionReview(BaseModel): status:Literal["Monitoring","Intervention Planned","Content Approved","Closed"]; communication_draft:str=Field(max_length=2000)
 class RoutingAction(BaseModel):
     status:Literal["Applied","Dismissed"]="Applied"

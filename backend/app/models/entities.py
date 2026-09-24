@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, ForeignKey, Text, JSON, LargeBinary
+from sqlalchemy import String, Integer, BigInteger, Float, Boolean, DateTime, ForeignKey, Text, JSON, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 from app.db.base import Base
@@ -107,6 +107,9 @@ class PublicLead(Base, TimestampMixin):
     name: Mapped[str]=mapped_column(String(100))
     phone: Mapped[str]=mapped_column(String(20))
     email: Mapped[str]=mapped_column(String(120))
+    requested_amount: Mapped[int | None]=mapped_column(BigInteger,nullable=True)
+    enquiry: Mapped[str]=mapped_column(Text,default="")
+    details: Mapped[dict]=mapped_column(JSON,default=dict)
     status: Mapped[str]=mapped_column(String(30),default="New")
     source: Mapped[str]=mapped_column(String(40),default="Public login assistant")
 
@@ -184,6 +187,8 @@ class RetentionScore(Base, TimestampMixin):
     case_type: Mapped[str]=mapped_column(String(30),default="Retention")
     status: Mapped[str]=mapped_column(String(30),default="Monitoring")
     communication_draft: Mapped[str]=mapped_column(Text,default="")
+    message_generated_by: Mapped[str]=mapped_column(String(60),default="Deterministic fallback")
+    knowledge_sources: Mapped[list]=mapped_column(JSON,default=list)
     reviewed_by: Mapped[int|None]=mapped_column(ForeignKey("users.id"),nullable=True)
     reviewed_at: Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
 

@@ -1,8 +1,13 @@
 from sqlalchemy.orm import Session
 from app.models import Customer,Opportunity
 from app.services.intelligence import MockAIProvider,provider
+from app.services.pdf_knowledge import retrieve_engagement_guidance
 
 REVIEWED_STATUSES={"Approved","Email Sent"}
+
+def _guidance(db:Session,query:str)->str|None:
+    matches=retrieve_engagement_guidance(db,query,limit=4)
+    return "\n\n".join(f"[{item['title']}, page {item['page']}] {item['content']}" for item in matches) or None
 
 def _profile(customer:Customer,existing:list[Opportunity]|None=None)->dict:
     return {
@@ -40,7 +45,8 @@ def identify_chat_opportunity(db:Session,customer_id:int,conversation_id:int,tex
     if not customer:return None
     context="\n".join([f"{item.get('role','user')}: {item.get('content','')}" for item in (history or [])]+[f"user: {text}"])
     existing=db.query(Opportunity).filter_by(customer_id=customer_id).all()
-    candidates=provider.opportunity_recommendations([_profile(customer,existing)],context)
+    guidance=_guidance(db,f"sales opportunity message product offer lead stage customer sentiment {context}")
+    candidates=provider.opportunity_recommendations([_profile(customer,existing)],context,guidance)
     for raw in candidates:
         candidate=_clean(raw,{customer_id})
         if candidate:
@@ -56,7 +62,8 @@ def identify_opportunities(db:Session)->list[Opportunity]:
     created=[]
     for offset in range(0,len(customers),10):
         batch=customers[offset:offset+10];allowed={customer.id for customer in batch}
-        raw_items=provider.opportunity_recommendations([_profile(customer,by_customer.get(customer.id,[])) for customer in batch])
+        guidance=_guidance(db,"sales opportunity message approved products offers lead communication disclosures")
+        raw_items=provider.opportunity_recommendations([_profile(customer,by_customer.get(customer.id,[])) for customer in batch],guidance=guidance)
         # Keep refresh useful if a model omits all baseline candidates for an eligible profile.
         baseline=MockAIProvider().opportunity_recommendations([_profile(customer,by_customer.get(customer.id,[])) for customer in batch])
         returned={(int(item.get("customer_id",-1)),str(item.get("product","")).lower()) for item in raw_items if isinstance(item,dict)}
@@ -75,7 +82,8 @@ def identify_opportunities(db:Session)->list[Opportunity]:
         customer=customer_map.get(item.customer_id)
         if not customer:continue
         instruction=f"Regenerate the existing {item.product} opportunity from this stored signal only. Keep the product exactly {item.product}. Existing reason: {item.reason}. Existing trigger: {item.trigger}."
-        suggestions=provider.opportunity_recommendations([_profile(customer,[item])],instruction)
+        guidance=_guidance(db,f"sales opportunity message {item.product} approved offer disclosures")
+        suggestions=provider.opportunity_recommendations([_profile(customer,[item])],instruction,guidance)
         if not suggestions:continue
         raw={**suggestions[0],"customer_id":customer.id,"product":item.product}
         candidate=_clean(raw,{customer.id})

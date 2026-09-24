@@ -3,6 +3,10 @@ import re
 
 from app.models import FinancialGoal
 
+def coach(goal: FinancialGoal, text: str) -> dict:
+    from app.services.coaching_session import coach as session_coach
+    return session_coach(goal, text)
+
 FIELDS = ["monthly_income", "monthly_expenses", "target_amount", "timeline_months"]
 QUESTIONS = {
     "monthly_income": "What is your approximate monthly take-home income?",
@@ -48,7 +52,7 @@ def _goal_name(text: str, current: str) -> str:
         if any(term in lowered for term in terms): return name
     return current or "Savings Goal"
 
-def coach(goal: FinancialGoal, text: str) -> dict:
+def calculate_goal(goal: FinancialGoal, text: str) -> dict:
     data = dict(dict(goal.coaching_plan or {}).get("inputs", {}))
     income = _keyword_amount(text, ["take home", "take-home", "salary", "income", "earn"])
     expenses = _keyword_amount(text, ["monthly expenses", "expenses", "expense", "spending", "spend"])
@@ -72,7 +76,7 @@ def coach(goal: FinancialGoal, text: str) -> dict:
     goal.target_amount = float(data.get("target_amount", 0)); goal.saved_amount = float(data.get("saved_amount", goal.saved_amount or 0))
     goal.timeline_months = int(data.get("timeline_months", 0)); remaining = max(0, goal.target_amount - goal.saved_amount)
     goal.monthly_required = remaining / goal.timeline_months if goal.timeline_months else 0
-    plan = {"inputs": data}
+    plan = {**(goal.coaching_plan or {}), "inputs": data}
     if not missing:
         surplus = goal.monthly_income - goal.monthly_expenses; safe_capacity = max(0, surplus * 0.8)
         feasible = goal.monthly_required <= safe_capacity and surplus > 0

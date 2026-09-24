@@ -48,6 +48,10 @@ def understand(message: str, history: list | None = None) -> Understanding | Non
         result = json.loads(response.json()["response"])
         intent = result.get("intent")
         query = result.get("query")
+        # Social turns do not need a retrieval query. Some models correctly
+        # leave it empty even when their intent and conversational reply are valid.
+        if intent in {"greeting", "social", "capabilities", "clarify"} and (not isinstance(query, str) or not query.strip()):
+            query = message[:500]
         if intent in {"greeting", "social", "capabilities", "banking", "clarify"} and isinstance(query, str) and 0 < len(query) <= 500:
             current = " ".join(message.lower().split())
             asks_capabilities = bool(re.search(r"\b(?:services?|help|capabilities)\b", current) and re.search(r"\b(?:you|your|provide|offer|do)\b", current) and not re.search(r"\b(?:loan|card|deposit|account|branch|atm|rights|policy)\b", current))

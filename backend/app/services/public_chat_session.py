@@ -8,6 +8,7 @@ from app.models import PublicConversation, PublicLead, PublicMessage
 from app.services.public_assistant_agent import public_assistant_agent
 from app.services.public_lead_context import contextual_product
 from app.services.public_conversation import social_reply
+from app.services.public_lead_details import extract_lead_details
 
 PRODUCTS = {
     "Home Loan": ("home loan", "buy a house", "buying a house", "buy a home", "buying a home"),
@@ -58,8 +59,64 @@ def _answer(db: Session, conversation: PublicConversation, question: str) -> dic
     product = detect_product_interest(question)
     if product:
         return {"message": f"I can help with general {product.lower()} information. Would you like to know about eligibility, documents, or the application process?", "grounded": False, "sources": []}
-    history = [type("Turn", (), {"role": item.role, "content": item.content}) for item in conversation.messages[-9:-1]]
+    rows = db.query(PublicMessage).filter_by(conversation_id=conversation.id).order_by(PublicMessage.id.desc()).limit(10).all()
+    contact_values = {conversation.contact_name, conversation.contact_phone, conversation.contact_email}
+    history = [type("Turn", (), {"role": item.role, "content": item.content}) for item in reversed(rows[1:]) if item.content not in contact_values]
     return public_assistant_agent.respond(db, question, history)
+
+
+def _upsert_lead(db: Session, conversation: PublicConversation) -> PublicLead | None:
+    """Save a lead as soon as at least one usable contact channel is shared."""
+    if not (conversation.contact_phone or conversation.contact_email):
+        return None
+    lead = db.query(PublicLead).filter_by(conversation_id=conversation.id).first()
+    product = conversation.pending_product or (lead.product if lead else "Banking enquiry")
+    question = conversation.pending_question
+    contact_values = {conversation.contact_name, conversation.contact_phone, conversation.contact_email}
+    user_messages = [item.content for item in conversation.messages if item.role == "user" and item.content not in contact_values]
+    requested_amount, enquiry, details = extract_lead_details(user_messages, product, question)
+    if lead is None:
+        lead = PublicLead(conversation_id=conversation.id, product=product, name="", phone="", email="")
+    lead.product = product
+    lead.name = conversation.contact_name or lead.name
+    lead.phone = conversation.contact_phone or lead.phone
+    lead.email = conversation.contact_email or lead.email
+    lead.requested_amount = requested_amount or lead.requested_amount
+    lead.enquiry = enquiry or lead.enquiry
+    lead.details = {**(lead.details or {}), **details}
+    lead.status = "New" if lead.name and lead.phone and lead.email else "Contact details incomplete"
+    db.add(lead)
+    db.flush()
+    return lead
+
+
+def _next_contact_step(conversation: PublicConversation, received: str) -> str:
+    orders = {
+        "name": (("phone", conversation.contact_phone), ("email", conversation.contact_email)),
+        "phone": (("email", conversation.contact_email), ("name", conversation.contact_name)),
+        "email": (("phone", conversation.contact_phone), ("name", conversation.contact_name)),
+    }
+    return next((field for field, value in orders[received] if not value), "")
+
+
+def _contact_prompt(step: str) -> str:
+    prompts = {
+        "name": "What name should the bank representative use?",
+        "phone": "What phone number can the bank use to contact you?",
+        "email": "What email address can the bank use to contact you?",
+    }
+    return f"{prompts[step]} You can type Skip to save the details already shared and continue."
+
+
+def _finish_contact_capture(db: Session, conversation: PublicConversation, prefix: str) -> dict:
+    question = conversation.pending_question
+    _upsert_lead(db, conversation)
+    conversation.contact_step = ""
+    conversation.pending_product = ""
+    conversation.pending_question = ""
+    result = _answer(db, conversation, question)
+    result["message"] = prefix + result["message"]
+    return result
 
 def public_chat(db: Session, message: str, session_id: str | None = None) -> dict:
     conversation = db.query(PublicConversation).filter_by(session_token=session_id).first() if session_id else None
@@ -75,15 +132,17 @@ def public_chat(db: Session, message: str, session_id: str | None = None) -> dic
     is_question = bool("?" in text or re.match(r"^(?:what|how|why|when|where|which|can you|could you|tell me|explain)\b", text, re.I))
     if conversation.contact_step and (text.lower().strip(".! ") in {"skip", "no", "cancel"} or DECLINE.search(text) or is_question):
         question = conversation.pending_question
+        saved = _upsert_lead(db, conversation)
         conversation.contact_declined = True
         conversation.contact_step = ""
         conversation.pending_product = ""
         conversation.pending_question = ""
-        conversation.contact_name = ""
-        conversation.contact_phone = ""
-        conversation.contact_email = ""
+        if saved is None:
+            conversation.contact_name = ""
+            conversation.contact_phone = ""
+            conversation.contact_email = ""
         result = _answer(db, conversation, text if is_question else question)
-        result["message"] = "No problem. " + result["message"]
+        result["message"] = ("Thank you. The contact details you shared have been saved. " if saved else "No problem. ") + result["message"]
     elif conversation.contact_step and social_reply(text):
         result = {"message": social_reply(text), "grounded": False, "sources": []}
     elif conversation.contact_step and continuing_interest:
@@ -92,33 +151,39 @@ def public_chat(db: Session, message: str, session_id: str | None = None) -> dic
         conversation.pending_question = f"{text}\nProduct of interest: {continuing_interest}"
         label = {"name": "name", "phone": "phone number", "email": "email address"}[conversation.contact_step]
         result = {"message": f"Understood, you are interested in a {conversation.pending_product.lower()}. For an optional bank follow-up, please share your {label}, or type Skip to continue with general questions.", "grounded": False, "sources": []}
+    elif conversation.contact_step and EMAIL.fullmatch(text) and len(text) <= 120:
+        conversation.contact_email = text
+        _upsert_lead(db, conversation)
+        next_step = _next_contact_step(conversation, "email")
+        if next_step:
+            conversation.contact_step = next_step
+            result = {"message": "Thank you. " + _contact_prompt(next_step), "grounded": False, "sources": []}
+        else:
+            result = _finish_contact_capture(db, conversation, "Thank you. Your details have been saved for a bank representative to review. ")
+    elif conversation.contact_step and PHONE.fullmatch(text) and 10 <= len(re.sub(r"\D", "", text)) <= 15:
+        conversation.contact_phone = text
+        _upsert_lead(db, conversation)
+        next_step = _next_contact_step(conversation, "phone")
+        if next_step:
+            conversation.contact_step = next_step
+            result = {"message": "Thank you. " + _contact_prompt(next_step), "grounded": False, "sources": []}
+        else:
+            result = _finish_contact_capture(db, conversation, "Thank you. Your details have been saved for a bank representative to review. ")
     elif conversation.contact_step == "name":
         if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,98}", text):
             result = {"message": "Please enter your name, or type Skip to continue without sharing contact details.", "grounded": False, "sources": []}
         else:
             conversation.contact_name = text
-            conversation.contact_step = "phone"
-            result = {"message": "Thank you. What phone number can the bank use to contact you? You can type Skip to continue without sharing details.", "grounded": False, "sources": []}
+            next_step = _next_contact_step(conversation, "name")
+            if next_step:
+                conversation.contact_step = next_step
+                result = {"message": "Thank you. " + _contact_prompt(next_step), "grounded": False, "sources": []}
+            else:
+                result = _finish_contact_capture(db, conversation, "Thank you. Your details have been saved for a bank representative to review. ")
     elif conversation.contact_step == "phone":
-        digits = re.sub(r"\D", "", text)
-        if not PHONE.fullmatch(text) or not 10 <= len(digits) <= 15:
-            result = {"message": "Please enter a valid phone number with 10 to 15 digits, or type Skip.", "grounded": False, "sources": []}
-        else:
-            conversation.contact_phone = text
-            conversation.contact_step = "email"
-            result = {"message": "Thanks. What email address can the bank use to contact you? You can type Skip to continue without sharing details.", "grounded": False, "sources": []}
+        result = {"message": "Please enter a valid phone number with 10 to 15 digits, or type Skip to save the details already shared.", "grounded": False, "sources": []}
     elif conversation.contact_step == "email":
-        if not EMAIL.fullmatch(text) or len(text) > 120:
-            result = {"message": "Please enter a valid email address, or type Skip.", "grounded": False, "sources": []}
-        else:
-            conversation.contact_email = text
-            question = conversation.pending_question
-            db.add(PublicLead(conversation_id=conversation.id, product=conversation.pending_product, name=conversation.contact_name, phone=conversation.contact_phone, email=text))
-            conversation.contact_step = ""
-            conversation.pending_product = ""
-            conversation.pending_question = ""
-            result = _answer(db, conversation, question)
-            result["message"] = "Thank you. Your details have been saved for a bank representative to review. " + result["message"]
+        result = {"message": "Please enter a valid email address, or type Skip to save the details already shared.", "grounded": False, "sources": []}
     else:
         existing_lead = db.query(PublicLead).filter_by(conversation_id=conversation.id).first()
         interest = detect_contextual_interest(db, conversation, message) if existing_lead is None and (not conversation.contact_declined or requests_callback(message)) else None

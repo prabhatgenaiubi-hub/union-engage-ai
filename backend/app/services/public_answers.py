@@ -1,11 +1,13 @@
 import re
+import json
 import logging
 import httpx
 from app.core.config import settings
+from app.services.public_prompt import PUBLIC_SYSTEM, conversation_context
 
 logger = logging.getLogger(__name__)
 
-UNKNOWN = "I couldn't find a clear answer in the approved public knowledge. Please ask a more specific question or contact the bank."
+UNKNOWN = "This information is not available in the current knowledge base."
 
 PUBLIC_CAPABILITIES = "I can answer general questions about Union Bank accounts, debit cards, deposits, loans, digital banking, and service policies. You can ask about a specific product or process. For your balance, transactions, card status, or a service request, please sign in."
 
@@ -34,7 +36,7 @@ def general_answer(question: str) -> str | None:
     try:
         response = httpx.post(
             f"{settings.ollama_base_url.rstrip('/')}/api/generate",
-            json={"model": settings.ollama_model, "prompt": prompt, "stream": False, "options": {"temperature": 0.2, "num_predict": 100}},
+            json={"model": settings.ollama_model, "system": PUBLIC_SYSTEM, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_predict": 100}},
             timeout=min(settings.ollama_timeout_seconds, 25),
         )
         response.raise_for_status()
@@ -60,8 +62,9 @@ def generated_answer(question: str, passage: str, history: list | None = None) -
     """Use a local model only after an approved passage has been selected."""
     cleaned = re.sub(r"(?im)^\s*(?:classification:.*|page\s+\d+\s+of\s+\d+|.*central office.*)\s*$", "", passage).strip()
     prompt = "You are the public Union Bank login-page assistant. Answer the current question directly in plain language using only the approved excerpt below. Summarize the actual answer in complete sentences, under 110 words. Never repeat the question or its opening phrase. Never use ellipses. Do not copy document headers, classification markings, or long passages. If the excerpt does not answer the question, reply exactly INSUFFICIENT. Do not invent rates, timeframes, eligibility, or account details. Never ask for PIN, OTP, CVV, password, or full card number.\nApproved excerpt:\n" + cleaned[:4500] + "\nCurrent question: " + question + "\nConcise answer:"
+    prompt = "Recent conversation (context only, not policy evidence):\n" + json.dumps(conversation_context(history), ensure_ascii=False) + "\nIf the visitor asks for a simpler explanation, explain the relevant point in everyday language rather than repeating the previous wording.\n" + prompt
     try:
-        response = httpx.post(f"{settings.ollama_base_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "prompt": prompt, "stream": False, "options": {"temperature": 0.1, "num_predict": 180}}, timeout=min(settings.ollama_timeout_seconds, 45))
+        response = httpx.post(f"{settings.ollama_base_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "system": PUBLIC_SYSTEM, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_predict": 220}}, timeout=min(settings.ollama_timeout_seconds, 45))
         response.raise_for_status()
         answer = response.json()["response"].strip()
         if not answer or "INSUFFICIENT" in answer.upper() or len(answer) > 900 or "..." in answer or "…" in answer:

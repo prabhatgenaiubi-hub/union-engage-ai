@@ -22,8 +22,9 @@ class PublicAssistantAgent:
 
     def respond(self, db: Session, message: str, history: list[PublicChatTurn] | None = None) -> dict:
         normalized = " ".join(message.lower().split())
+        explanation_request = bool(re.search(r"\b(?:simpler|simplify|explain again|explain that|explain it|more simply|do not understand|don't understand|didn't understand)\b", normalized))
         conversational_reply = social_reply(message)
-        if conversational_reply:
+        if conversational_reply and not (explanation_request and history):
             return self._reply(conversational_reply)
         private_query = bool(re.search(r"\b(?:my|mine)\b.{0,40}\b(?:account|balance|transaction|statement|card|loan|application|service request|ticket)\b", normalized)) or any(phrase in normalized for phrase in ("account number", "transaction status"))
         if private_query:
@@ -36,11 +37,17 @@ class PublicAssistantAgent:
         if help_response:
             return self._reply(help_response)
         understanding = understand(message, history)
-        has_banking_terms = bool(re.search(r"\b(?:atm|account|balance|card|loan|deposit|cheque|transaction|re.?imburse|compensat|interest|payment|branch)\b", normalized))
+        has_banking_terms = bool(re.search(r"\b(?:atm|accounts?|balance|cards?|loans?|deposits?|cheques?|transactions?|re.?imburse|compensat\w*|interest|payments?|branch|rights|polic\w*|documents?|eligibility|rates?|fees?|charges?)\b", normalized))
         if understanding and understanding.intent == "greeting" and not has_banking_terms and not is_general_question(message):
-            return self._reply("Hello! I can help with general questions about Union Bank accounts, cards, loans, deposits and banking services. What would you like to know?")
+            if not explanation_request:
+                return self._reply(understanding.reply or "Hello! What banking question can I help you with today?")
         if understanding and understanding.intent == "social" and not has_banking_terms and not is_general_question(message):
-            return self._reply("Hello! I'm here and ready to help. What banking question can I answer for you?")
+            if not explanation_request:
+                return self._reply(understanding.reply or "I'm here to help. What would you like to know?")
+        if understanding and understanding.intent == "capabilities" and not has_banking_terms and not is_general_question(message):
+            return self._reply(understanding.reply or PUBLIC_CAPABILITIES)
+        if understanding and understanding.intent == "clarify" and understanding.reply and not has_banking_terms and not history:
+            return self._reply(understanding.reply)
         if re.fullmatch(r"(?:hi+|hello+|hey+|good (?:morning|afternoon|evening)|namaste|namaskar)[!., ]*", normalized):
             return self._reply("Hello! I can help with general questions about Union Bank accounts, cards, loans, deposits and banking services. What would you like to know?")
         if re.fullmatch(r"(?:how are you|how's it going|thank you|thanks)[!?., ]*", normalized):
@@ -53,8 +60,12 @@ class PublicAssistantAgent:
             query = message
         query = re.sub(r"\bconsumers?\b", "customer", query, flags=re.I)
         earlier_questions = [turn.content for turn in reversed(history or []) if turn.role == "user"]
+        if explanation_request and history:
+            previous = next((text for text in earlier_questions if not social_reply(text) and not re.search(r"\b(?:simpler|simplify|explain again|explain that)\b", text, re.I)), None)
+            if previous and (query == message or not understanding or understanding.intent != "banking"):
+                query = f"{previous} Explain in simpler words."
         recent_atm = next((text for text in earlier_questions if re.search(r"\b(?:atm|cash not dispensed|failed transaction)\b", text, re.I)), None)
-        if recent_atm and re.search(r"\b(?:amount|re.?imburse|compensat|eligible|debited|cash not dispensed)\b", normalized):
+        if recent_atm and not re.search(r"\b(?:loans?|deposits?|credit cards?|home|personal)\b", normalized) and re.search(r"\b(?:amount|re.?imburse|compensat|eligible|debited|cash not dispensed)\b", normalized):
             query = f"failed ATM transaction cash not dispensed wrong debit compensation {recent_atm} {message}"
         elif query == message and len(re.findall(r"\w+", message)) <= 5 and re.search(r"\b(?:it|that|this|those|they|them)\b", normalized):
             previous = next((text for text in earlier_questions if len(text.split()) > 3), None)
@@ -82,16 +93,16 @@ class PublicAssistantAgent:
         pdf_matches = rank_passages(query, [match for match in pdf_matches if supports_question_focus(message, match["content"])])
         for item in pdf_matches:
             exact_definition = definition_excerpt(query, item["content"])
-            if exact_definition:
+            if exact_definition and not explanation_request:
                 return self._reply(exact_definition, True, [{"title": item["title"], "page": item["page"], "type": "pdf"}])
             policy_summary = policy_answer(normalize(query), item["content"], message)
-            if policy_summary:
+            if policy_summary and not explanation_request:
                 return self._reply(policy_summary, True, [{"title": item["title"], "page": item["page"], "type": "pdf"}])
         if pdf_matches and (not articles or pdf_matches[0]["score"] >= 0.70):
             selected = pdf_matches[:4]
             for item in selected:
                 policy_summary = policy_answer(query, item["content"], message)
-                if policy_summary:
+                if policy_summary and not explanation_request:
                     return self._reply(policy_summary, True, [{"title": item["title"], "page": item["page"], "type": "pdf"}])
             context = "\n\n".join(f"[{item['title']}, page {item['page']}] {item['content']}" for item in selected)
             answer = generated_answer(query, context, history)
