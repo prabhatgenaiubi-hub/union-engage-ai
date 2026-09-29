@@ -5,6 +5,7 @@ services:
       POSTGRES_DB: union_engage
       POSTGRES_USER: union
       POSTGRES_PASSWORD: union
+    ports: ["5433:5432"]
     volumes: [postgres_data:/var/lib/postgresql/data]
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U union -d union_engage"]
