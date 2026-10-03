@@ -67,7 +67,8 @@ def recalculate_conversation_sentiment(db:Session,conversation_id:int)->int:
     rows=db.query(InteractionAnalysis,Message).join(Message,InteractionAnalysis.message_id==Message.id).filter(Message.conversation_id==conversation_id).order_by(Message.created_at.asc()).all()
     prior=[]
     for interaction,message in rows:
-        recalculated=contextual_sentiment(provider.analyze(message.content),message.content,list(reversed(prior)))
+        english_text=provider.to_english(message.content,detected_language(message.content))
+        recalculated=contextual_sentiment(provider.analyze(english_text),english_text,list(reversed(prior)))
         for field in ["intent","sentiment","score","emotion","urgency","complaint","repeat"]:
             target="repeat_contact" if field=="repeat" else field
             setattr(interaction,target,getattr(recalculated,field))
@@ -108,7 +109,7 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
     history=[{"role":item.role,"content":item.content} for item in reversed(previous)]
     session_analysis_rows=db.query(InteractionAnalysis,Message).join(Message,InteractionAnalysis.message_id==Message.id).filter(Message.conversation_id==conv.id).order_by(Message.created_at.desc()).all()
     complaint_rows=[row for row in session_analysis_rows if row[0].complaint]
-    prior_issue=next(((analysis,message) for analysis,message in complaint_rows if not explicit_service_request(message.content) and not contextual_follow_up(message.content) and provider.analyze(message.content).complaint),complaint_rows[-1] if complaint_rows else None)
+    prior_issue=next(((analysis,message) for analysis,message in complaint_rows if not explicit_service_request(message.content) and not contextual_follow_up(message.content) and provider.analyze(provider.to_english(message.content,detected_language(message.content))).complaint),complaint_rows[-1] if complaint_rows else None)
     contextual_query=" ".join([item["content"] for item in history[-4:] if item["role"]=="user"]+[text])
     analysis_query=provider.to_english(contextual_query,response_language)
     current_analysis_query=provider.to_english(text,response_language)
@@ -119,7 +120,7 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
     current_signal=provider.analyze(current_analysis_query)
     is_coaching=is_coaching or current_signal.intent=="Financial Coaching"
     if is_coaching: current_signal=replace(current_signal,intent="Financial Coaching")
-    a=contextual_sentiment(current_signal,text,prior_analyses)
+    a=contextual_sentiment(current_signal,current_analysis_query,prior_analyses)
     conv.primary_intent=a.intent; conv.sentiment=a.sentiment; conv.resolution_status="Unresolved" if a.complaint else "Answered"; conv.updated_at=datetime.utcnow(); conv.summary=f"Customer contacted the bank regarding {a.intent.lower()}. Current sentiment is {a.sentiment.lower()}. The interaction is {'at risk and requires service recovery' if a.sentiment=='Highly Negative' else 'awaiting confirmation that the customer is satisfied'}."
     interaction=InteractionAnalysis(message_id=msg.id,intent=a.intent,sentiment=a.sentiment,score=a.score,emotion=a.emotion,urgency=a.urgency,complaint=a.complaint,repeat_contact=a.repeat,entities=a.entities);db.add(interaction);db.flush()
     pdf_matches=retrieve_pdf_chunks(db,current_analysis_query,audience="coaching") if is_coaching else retrieve_pdf_chunks(db,analysis_query)

@@ -9,6 +9,8 @@ from app.services.public_assistant_agent import public_assistant_agent
 from app.services.public_lead_context import contextual_product
 from app.services.public_conversation import social_reply
 from app.services.public_lead_details import extract_lead_details
+from app.services.intelligence import provider
+from app.services.chat import detected_language
 
 PRODUCTS = {
     "Home Loan": ("home loan", "buy a house", "buying a house", "buy a home", "buying a home"),
@@ -118,7 +120,8 @@ def _finish_contact_capture(db: Session, conversation: PublicConversation, prefi
     result["message"] = prefix + result["message"]
     return result
 
-def public_chat(db: Session, message: str, session_id: str | None = None) -> dict:
+def public_chat(db: Session, message: str, session_id: str | None = None, language_code: str = "auto") -> dict:
+    response_language=detected_language(message) if language_code=="auto" else language_code
     conversation = db.query(PublicConversation).filter_by(session_token=session_id).first() if session_id else None
     if conversation is None:
         conversation = PublicConversation(session_token=secrets.token_urlsafe(32), title=message[:160])
@@ -127,7 +130,7 @@ def public_chat(db: Session, message: str, session_id: str | None = None) -> dic
     db.add(PublicMessage(conversation_id=conversation.id, role="user", content=message))
     db.flush()
 
-    text = message.strip()
+    text = provider.to_english(message.strip(),response_language)
     continuing_interest = detect_contextual_interest(db, conversation, text) if conversation.contact_step and INTEREST.search(text) and not re.search(r"@|\b\d{8,}\b", text) else None
     is_question = bool("?" in text or re.match(r"^(?:what|how|why|when|where|which|can you|could you|tell me|explain)\b", text, re.I))
     if conversation.contact_step and (text.lower().strip(".! ") in {"skip", "no", "cancel"} or DECLINE.search(text) or is_question):
@@ -196,6 +199,7 @@ def public_chat(db: Session, message: str, session_id: str | None = None) -> dic
         else:
             result = _answer(db, conversation, message)
 
+    result["message"]=provider.from_english(result["message"],response_language)
     db.add(PublicMessage(conversation_id=conversation.id, role="assistant", content=result["message"], sources=result["sources"]))
     db.commit()
     return _reply(conversation, result["message"], result["grounded"], result["sources"])

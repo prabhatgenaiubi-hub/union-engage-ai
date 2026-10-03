@@ -36,11 +36,19 @@ def test_retention_draft_uses_retrieved_guidance(monkeypatch):
     try:
         customer=db.query(Customer).first()
         item=retention_engine.refresh_customer_retention(db,customer.id,generate_message=True)
-        assert item.communication_draft=="Guidance-grounded retention draft"
+        assert "Guidance-grounded retention draft" in item.communication_draft
+        assert item.communication_draft.startswith(f"Dear {customer.name},")
+        assert item.communication_draft.endswith("Regards,\nUnion Bank of India")
         assert item.message_generated_by=="AI + engagement RAG"
         assert item.knowledge_sources==[{"document_id":None,"title":"Engagement Guide","page":4,"score":None}]
         assert captured["kind"]=="retention"
         assert "Engagement Guide" in captured["guidance"]
         assert captured["facts"]["customer_name"]==customer.name
+        assert "recent_customer_interactions" in captured["facts"]
+        assert "latest_conversation" in captured["facts"]
+        generated=item.communication_draft
+        refreshed=retention_engine.refresh_customer_retention(db,customer.id,generate_message=False)
+        assert refreshed.communication_draft==generated
+        assert refreshed.message_generated_by=="AI + engagement RAG"
     finally:
         db.close()

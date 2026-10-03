@@ -29,6 +29,10 @@ services:
       OLLAMA_TIMEOUT_SECONDS: 90
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
       OLLAMA_EMBEDDING_TIMEOUT_SECONDS: 180
+      LOCAL_SENTIMENT_MODEL: cardiffnlp/twitter-roberta-base-sentiment-latest
+      LOCAL_SENTIMENT_ENABLED: "true"
+      LOCAL_SENTIMENT_LOCAL_FILES_ONLY: "false"
+      LOCAL_TRANSLATION_ENABLED: "true"
       BREVO_API_KEY: ${BREVO_API_KEY:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-onboarding@resend.dev}

@@ -173,6 +173,17 @@ def test_personal_loan_lead_uses_conversation_context(client,customer_headers,ad
  assert informational["lead"] is None
 def test_attrition_scoring():
  a=provider.analyze("This is the third time. I am fed up and want to close my account"); score,level,reasons=retention(a); assert score>=80 and level=="Critical" and reasons
+
+def test_multilingual_account_closure_intent_detection():
+ from app.services.intelligence import is_account_closure_intent
+ for message in [
+  "Mujhe mera savings account close karna hai, woh kaise kar sakta hoon?",
+  "मुझे मेरा करंट अकाउंट बंद करना है।",
+  "How can I close my current account?",
+ ]:
+  assert is_account_closure_intent(message)
+  assert provider.analyze(message).intent=="Account Closure"
+ assert not is_account_closure_intent("I want to close my vehicle loan")
 def test_routing_rules():
  a=provider.analyze("My account was wrongly debited and nobody helped"); queue,_=route(a); assert queue in ["Supervisor Review","Priority Service Queue"]
 def test_service_sentiment_drives_operational_routing(client,customer_headers,admin_headers):
@@ -351,6 +362,18 @@ def test_chat_auto_language_uses_message_script():
  assert detected_language("Create an emergency fund")=="en-IN"
  assert detected_language("आपातकालीन निधि बनाएं")=="hi-IN"
  assert provider.analyze("Plan to buy a home").intent=="Financial Coaching"
+
+def test_customer_voice_transcription_preserves_requested_language(client,customer_headers,monkeypatch):
+ captured={}
+ def transcribe(data,filename,content_type,language_code):
+  captured["language_code"]=language_code
+  return {"transcript":"मुझे मेरा सेविंग्स अकाउंट बंद करना है।","language_code":"hi-IN","language_probability":.99}
+ monkeypatch.setattr("app.api.routes.transcribe_audio",transcribe)
+ response=client.post("/api/speech-to-text",headers=customer_headers,data={"language_code":"auto"},files={"file":("recording.webm",b"voice","audio/webm")})
+ assert response.status_code==200
+ assert captured["language_code"]=="auto"
+ assert response.json()["transcript"]=="मुझे मेरा सेविंग्स अकाउंट बंद करना है।"
+
 def test_sarvam_response_script_validation():
  from app.services.intelligence import SarvamAIProvider
  assert SarvamAIProvider._uses_target_script("मैं आपकी सहायता कर सकता हूँ।","hi-IN")
@@ -376,7 +399,8 @@ def test_approved_opportunity_email_uses_provider(client,customer_headers,admin_
  payload={"recipient":"edited@example.com","subject":"A reviewed subject","message":"A reviewed email message"}
  sent=client.post(f"/api/opportunities/{item_id}/send-email",headers=admin_headers,json=payload)
  assert sent.status_code==200 and sent.json()["status"]=="Email Sent" and sent.json()["recipient"]=="edited@example.com" and sent.json()["subject"]=="A reviewed subject"
- assert captured["args"][0]=="edited@example.com" and captured["args"][2:]==("A reviewed subject","A reviewed email message")
+ assert captured["args"][0]=="edited@example.com" and captured["args"][2]=="A reviewed subject"
+ assert captured["args"][3].startswith("Dear Test User,") and captured["args"][3].endswith("Regards,\nUnion Bank of India")
 def test_authorization(client,customer_headers): assert client.get("/api/dashboard",headers=customer_headers).status_code==403
 def test_customer_and_employee_self_registration(client):
  customer=client.post("/api/auth/register",json={"user_type":"customer","display_name":"New Customer","login_id":"new.customer","password":"SecurePass123"})

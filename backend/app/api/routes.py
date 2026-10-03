@@ -8,7 +8,7 @@ from app.schemas.api import *
 from app.core.security import verify_password, create_token
 from app.api.deps import current_user, bank_user, admin_user
 from app.services.chat import process_message
-from app.services.intelligence import provider, routing_intelligence
+from app.services.intelligence import format_customer_message,provider, routing_intelligence
 from app.core.config import settings
 from app.services.pdf_knowledge import ingest_pdf, MAX_PDF_BYTES
 from app.services.speech import transcribe_audio, transcribe_audio_batch, MAX_AUDIO_BYTES, MAX_BATCH_AUDIO_BYTES
@@ -17,6 +17,7 @@ from app.services.engagement import engagement_decision
 from app.services.recommendations import identify_opportunities
 from app.services.retention_engine import refresh_all_retention,refresh_customer_retention
 from app.services.email import send_transactional_email
+from app.services.public_chat_session import public_chat as public_chat_service
 
 router=APIRouter(prefix="/api")
 def serialize(obj):
@@ -49,6 +50,22 @@ def employee_login(payload:LoginRequest,db:Session=Depends(get_db)): return logi
 @router.get("/me",tags=["Authentication"])
 def me(user:User=Depends(current_user)): return {"id":user.id,"name":user.display_name,"role":user.role,"type":user.user_type,"customer_id":user.customer_id}
 
+@router.post("/public/chat",tags=["Public Assistant"])
+def public_chat_endpoint(payload:PublicChatRequest,db:Session=Depends(get_db)):
+    return public_chat_service(db,payload.message,payload.session_id,payload.language_code)
+
+@router.get("/public/chat/{session_id}",tags=["Public Assistant"])
+def public_chat_history(session_id:str,db:Session=Depends(get_db)):
+    conversation=db.query(PublicConversation).filter_by(session_token=session_id).first()
+    if not conversation:raise HTTPException(404,"Public chat session not found")
+    return {"session_id":conversation.session_token,"messages":[{"role":item.role,"content":item.content,"sources":item.sources or []} for item in conversation.messages]}
+
+@router.post("/public/speech-to-text",tags=["Public Assistant"])
+async def public_speech_to_text(file:UploadFile=File(...),language_code:str=Form("auto")):
+    data=await file.read(MAX_AUDIO_BYTES+1)
+    try:return transcribe_audio(data,file.filename or "recording.webm",file.content_type or "application/octet-stream",language_code)
+    except ValueError as exc:raise HTTPException(400,str(exc))
+
 @router.get("/customer/profile",tags=["Customer"])
 def customer_profile(user:User=Depends(current_user),db:Session=Depends(get_db)):
     if user.user_type!="customer" or not user.customer_id:raise HTTPException(403,"Customer access required")
@@ -64,7 +81,7 @@ def chat(payload:ChatRequest,user:User=Depends(current_user),db:Session=Depends(
 async def speech_to_text(file:UploadFile=File(...),language_code:str=Form("auto"),user:User=Depends(current_user)):
     if user.user_type!="customer":raise HTTPException(403,"Customer access required")
     data=await file.read(MAX_AUDIO_BYTES+1)
-    try:return transcribe_audio(data,file.filename or "recording.webm",file.content_type or "application/octet-stream","en-IN")
+    try:return transcribe_audio(data,file.filename or "recording.webm",file.content_type or "application/octet-stream",language_code)
     except ValueError as exc:raise HTTPException(400,str(exc))
 @router.post("/admin/voice-sentiment",tags=["Administration"])
 async def analyze_voice_sentiment(file:UploadFile=File(...),customer_id:int=Form(...),user:User=Depends(admin_user),db:Session=Depends(get_db)):
@@ -73,7 +90,7 @@ async def analyze_voice_sentiment(file:UploadFile=File(...),customer_id:int=Form
     data=await file.read(MAX_BATCH_AUDIO_BYTES+1)
     try:transcription=transcribe_audio_batch(data,file.filename or "recording",file.content_type or "application/octet-stream")
     except ValueError as exc:raise HTTPException(400,str(exc))
-    detected_language="en-IN"
+    detected_language=transcription.get("language_code") or "auto"
     analysis_text=provider.to_english(transcription["transcript"],detected_language)
     analysis=provider.analyze(analysis_text); routing=routing_intelligence(analysis)
     transcript=transcription["transcript"]
@@ -227,7 +244,7 @@ def customer360(customer_id:int,user:User=Depends(bank_user),db:Session=Depends(
     else:recommended+= ["Do not present sales offers while service recovery is active","Reassess engagement only after a positive resolution signal"]
     return {"customer":serialize(c),"conversations":[serialize(x) for x in conv],"service_requests":[serialize(x) for x in req],"leads":[serialize(x) for x in leads],"opportunities":[serialize(x) for x in opp],"retention":serialize(risk) if risk else None,"goals":[serialize(x) for x in goals],"ai_insights":insights,"engagement":engagement,"recommended_actions":recommended}
 @router.get("/leads",tags=["Bank Intelligence"])
-def leads(user:User=Depends(bank_user),db:Session=Depends(get_db)): return [serialize(x) for x in db.query(Lead).order_by(Lead.score.desc()).all()]
+def leads(user:User=Depends(bank_user),db:Session=Depends(get_db)): return [serialize(x) for x in db.query(Lead).order_by(Lead.created_at.desc()).all()]
 @router.post("/leads/{lead_id}/abandon",tags=["Lead Qualification"])
 def abandon_lead(lead_id:int,user:User=Depends(current_user),db:Session=Depends(get_db)):
     lead=db.get(Lead,lead_id)
@@ -243,7 +260,13 @@ def abandon_lead(lead_id:int,user:User=Depends(current_user),db:Session=Depends(
 @router.get("/opportunities",tags=["Bank Intelligence"])
 def opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     customers={item.id:item for item in db.query(Customer).all()}
-    return [{**serialize(item),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in db.query(Opportunity).order_by(Opportunity.score.desc()).all()]
+    rows=db.query(Opportunity).order_by(Opportunity.created_at.desc()).all()
+    for item in rows:
+        customer=customers.get(item.customer_id)
+        formatted=format_customer_message(item.communication_draft,customer.name if customer else None)
+        if item.communication_draft!=formatted:item.communication_draft=formatted
+    db.commit()
+    return [{**serialize(item),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","customer_phone":customers[item.customer_id].phone_number if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in rows]
 @router.post("/opportunities/refresh",tags=["Bank Intelligence"])
 def refresh_opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     created=identify_opportunities(db);db.add(AuditLog(user_id=user.id,action="OPPORTUNITIES_REFRESHED",entity="opportunity",entity_id="batch",metadata_json={"created":len(created)}));db.commit();return {"created":len(created)}
@@ -256,7 +279,7 @@ def update_opportunity(item_id:int,payload:OpportunityReview,user:User=Depends(b
     item.status=payload.status;item.communication_draft=payload.communication_draft.strip();item.reviewed_by=user.id;item.reviewed_at=datetime.utcnow()
     db.add(AuditLog(user_id=user.id,action="OPPORTUNITY_REVIEWED",entity="opportunity",entity_id=str(item.id),metadata_json={"status":payload.status,"engagement_state":engagement["state"]})); db.commit(); return {**serialize(item),"engagement":engagement}
 @router.post("/opportunities/{item_id}/send-email",tags=["Bank Intelligence"])
-def email_opportunity(item_id:int,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+def email_opportunity(item_id:int,payload:OpportunityEmailSend,user:User=Depends(bank_user),db:Session=Depends(get_db)):
     item=db.get(Opportunity,item_id)
     if not item:raise HTTPException(404,"Opportunity not found")
     if item.status!="Approved":raise HTTPException(409,"Approve the communication before sending email")
@@ -264,24 +287,53 @@ def email_opportunity(item_id:int,user:User=Depends(bank_user),db:Session=Depend
     if not engagement["eligible"]:raise HTTPException(409,f"Email blocked: {engagement['action']}")
     customer=db.get(Customer,item.customer_id)
     if not customer or not customer.email_address:raise HTTPException(409,"Customer email address is unavailable")
-    try:message_id=send_transactional_email(customer.email_address,customer.name,f"{item.product} options from Union Bank",item.communication_draft)
+    message=format_customer_message(payload.message,customer.name)
+    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message)
     except RuntimeError as exc:raise HTTPException(502,str(exc))
     item.status="Email Sent"
-    db.add(AuditLog(user_id=user.id,action="OPPORTUNITY_EMAIL_SENT",entity="opportunity",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":customer.email_address,"provider":"brevo","message_id":message_id}));db.commit()
-    return {"status":item.status,"recipient":customer.email_address,"message_id":message_id}
+    db.add(AuditLog(user_id=user.id,action="OPPORTUNITY_EMAIL_SENT",entity="opportunity",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id}));db.commit()
+    return {"status":item.status,"recipient":payload.recipient,"subject":payload.subject,"message_id":message_id}
 
 @router.get("/retention",tags=["Bank Intelligence"])
 def retention_list(user:User=Depends(bank_user),db:Session=Depends(get_db)):
-    items=refresh_all_retention(db);db.commit();customer_names=dict(db.query(Customer.id,Customer.name).all())
-    return [{**serialize(item),"customer_name":customer_names.get(item.customer_id,"Unknown customer")} for item in sorted(items,key=lambda item:item.score,reverse=True)]
+    items=refresh_all_retention(db);customers={item.id:item for item in db.query(Customer).all()}
+    for item in items:
+        customer=customers.get(item.customer_id)
+        item.communication_draft=format_customer_message(item.communication_draft,customer.name if customer else None)
+    db.commit()
+    result=[]
+    for item in items:
+        customer=customers.get(item.customer_id)
+        conversation=db.query(Conversation).filter_by(customer_id=item.customer_id).order_by(Conversation.updated_at.desc(),Conversation.id.desc()).first()
+        activity_at=conversation.updated_at if conversation else item.created_at
+        result.append({**serialize(item),"customer_name":customer.name if customer else "Unknown customer","customer_code":customer.customer_code if customer else str(item.customer_id),"email_address":customer.email_address if customer else "","phone_number":customer.phone_number if customer else "","rm_name":customer.rm_name if customer else "","activity_at":activity_at,"conversation_title":conversation.title if conversation else None,"conversation_summary":conversation.summary if conversation else None,"conversation_sentiment":conversation.sentiment if conversation else None,"conversation_resolution":conversation.resolution_status if conversation else None,"risk_summary":"; ".join(item.reasons) if item.reasons else "No material attrition signal detected"})
+    return sorted(result,key=lambda row:row["activity_at"],reverse=True)
 @router.post("/retention/refresh",tags=["Bank Intelligence"])
 def refresh_retention_cases(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     items=refresh_all_retention(db);db.add(AuditLog(user_id=user.id,action="RETENTION_REFRESHED",entity="retention",entity_id="batch",metadata_json={"customers":len(items)}));db.commit();return {"customers":len(items)}
+@router.post("/retention/{item_id}/regenerate",tags=["Bank Intelligence"])
+def regenerate_retention_case(item_id:int,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    item=db.get(RetentionScore,item_id)
+    if not item:raise HTTPException(404,"Retention case not found")
+    item.communication_draft="";item=refresh_customer_retention(db,item.customer_id,generate_message=True)
+    db.add(AuditLog(user_id=user.id,action="RETENTION_MESSAGE_REGENERATED",entity="retention",entity_id=str(item.id)));db.commit();db.refresh(item);return serialize(item)
 @router.patch("/retention/{item_id}",tags=["Bank Intelligence"])
 def review_retention_case(item_id:int,payload:RetentionReview,user:User=Depends(bank_user),db:Session=Depends(get_db)):
     item=db.get(RetentionScore,item_id)
     if not item:raise HTTPException(404,"Retention case not found")
     item.status=payload.status;item.communication_draft=payload.communication_draft.strip();item.reviewed_by=user.id;item.reviewed_at=datetime.utcnow();db.add(AuditLog(user_id=user.id,action="RETENTION_CASE_REVIEWED",entity="retention",entity_id=str(item.id),metadata_json={"status":payload.status}));db.commit();return serialize(item)
+@router.post("/retention/{item_id}/send-email",tags=["Bank Intelligence"])
+def email_retention_case(item_id:int,payload:OpportunityEmailSend,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    item=db.get(RetentionScore,item_id)
+    if not item:raise HTTPException(404,"Retention case not found")
+    if item.status!="Content Approved":raise HTTPException(409,"Approve the retention communication before sending email")
+    customer=db.get(Customer,item.customer_id)
+    if not customer:raise HTTPException(404,"Customer not found")
+    message=format_customer_message(payload.message,customer.name)
+    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message)
+    except RuntimeError as exc:raise HTTPException(502,str(exc))
+    db.add(AuditLog(user_id=user.id,action="RETENTION_EMAIL_SENT",entity="retention",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id}));db.commit()
+    return {"status":item.status,"recipient":payload.recipient,"message_id":message_id}
 @router.get("/routing",tags=["Bank Intelligence"])
 def routing_list(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     rows=db.query(RoutingDecision,Conversation,Customer).join(Conversation,RoutingDecision.conversation_id==Conversation.id).join(Customer,Conversation.customer_id==Customer.id).order_by(RoutingDecision.created_at.desc()).all()

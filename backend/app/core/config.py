@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ollama_timeout_seconds: int = 90
     ollama_embedding_model: str = "nomic-embed-text:latest"
     ollama_embedding_timeout_seconds: int = 180
+    local_sentiment_model: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    local_sentiment_enabled: bool = True
+    local_sentiment_local_files_only: bool = False
+    local_translation_enabled: bool = True
     brevo_api_key: str = ""
     resend_api_key: str = ""
     resend_from_email: str = "onboarding@resend.dev"

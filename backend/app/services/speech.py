@@ -68,7 +68,7 @@ def transcribe_audio_batch(data: bytes, filename: str, content_type: str) -> dic
     base=settings.sarvam_base_url.rstrip("/")+"/speech-to-text/job/v1"
     try:
         with httpx.Client(timeout=60) as client:
-            created=client.post(base,headers=headers,json={"job_parameters":{"model":settings.sarvam_speech_model,"mode":"transcribe","language_code":"en-IN"}});created.raise_for_status();job_id=created.json()["job_id"]
+            created=client.post(base,headers=headers,json={"job_parameters":{"model":settings.sarvam_speech_model,"mode":"transcribe","language_code":"unknown"}});created.raise_for_status();job_id=created.json()["job_id"]
             links=client.post(f"{base}/upload-files",headers=headers,json={"job_id":job_id,"files":[safe_name]});links.raise_for_status();upload_url=links.json()["upload_urls"][safe_name]["file_url"]
             upload_headers={"Content-Type":normalized}
             if "blob.core.windows.net" in upload_url: upload_headers["x-ms-blob-type"]="BlockBlob"
@@ -84,7 +84,7 @@ def transcribe_audio_batch(data: bytes, filename: str, content_type: str) -> dic
             downloads=client.post(f"{base}/download-files",headers=headers,json={"job_id":job_id,"files":[output]});downloads.raise_for_status();download_url=downloads.json()["download_urls"][output]["file_url"]
             result=client.get(download_url);result.raise_for_status();payload=result.json();transcript=payload.get("transcript","").strip()
             if not transcript: raise ValueError("No speech was detected in the recording")
-            return {"transcript":transcript,"language_code":"en-IN","language_probability":payload.get("language_probability")}
+            return {"transcript":transcript,"language_code":payload.get("language_code") or "auto","language_probability":payload.get("language_probability")}
     except httpx.HTTPStatusError as exc:
         logger.warning("Sarvam batch speech-to-text failed (%s): %s",exc.response.status_code,exc.response.text[:500])
         raise ValueError("Sarvam batch transcription failed. Please verify the recording and try again") from exc

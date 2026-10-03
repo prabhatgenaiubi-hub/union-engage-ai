@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from app.models import Customer,Opportunity
-from app.services.intelligence import MockAIProvider,provider
+from app.services.intelligence import MockAIProvider,format_customer_message,provider
 from app.services.pdf_knowledge import retrieve_engagement_guidance
 
 REVIEWED_STATUSES={"Approved","Email Sent"}
@@ -50,6 +50,7 @@ def identify_chat_opportunity(db:Session,customer_id:int,conversation_id:int,tex
     for raw in candidates:
         candidate=_clean(raw,{customer_id})
         if candidate:
+            candidate["communication_draft"]=format_customer_message(candidate["communication_draft"],customer.name)
             candidate["reason"]=f"Conversation #{conversation_id}: {candidate['reason']}"
             candidate["trigger"]=f"Chat signal · {candidate['trigger'][:70]} · Conversation #{conversation_id}"
             return _upsert(db,candidate)[0]
@@ -73,6 +74,8 @@ def identify_opportunities(db:Session)->list[Opportunity]:
             candidate=_clean(raw,allowed)
             key=(candidate["customer_id"],candidate["product"].lower()) if candidate else None
             if not candidate or key in seen:continue
+            customer=next((value for value in batch if value.id==candidate["customer_id"]),None)
+            candidate["communication_draft"]=format_customer_message(candidate["communication_draft"],customer.name if customer else None)
             seen.add(key);item,is_new=_upsert(db,candidate)
             if is_new:created.append(item)
     # Upgrade legacy pending cards through a focused AI rewrite. Reviewed content stays immutable.
@@ -87,5 +90,7 @@ def identify_opportunities(db:Session)->list[Opportunity]:
         if not suggestions:continue
         raw={**suggestions[0],"customer_id":customer.id,"product":item.product}
         candidate=_clean(raw,{customer.id})
-        if candidate:_upsert(db,candidate)
+        if candidate:
+            candidate["communication_draft"]=format_customer_message(candidate["communication_draft"],customer.name)
+            _upsert(db,candidate)
     return created

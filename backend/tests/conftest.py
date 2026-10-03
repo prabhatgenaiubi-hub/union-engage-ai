@@ -1,5 +1,7 @@
 import os
 os.environ["DATABASE_URL"]="sqlite:///./test.db"
+os.environ["LOCAL_SENTIMENT_ENABLED"]="false"
+os.environ["LOCAL_TRANSLATION_ENABLED"]="false"
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app

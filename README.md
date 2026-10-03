@@ -52,6 +52,8 @@ The provider abstraction supports `AI_PROVIDER=sarvam` for multilingual customer
 
 To return to fully deterministic mode, set `AI_PROVIDER=mock`. For a local backend outside Docker, use `OLLAMA_BASE_URL=http://localhost:11434`.
 
+Sentiment analysis is always performed on English text. Customer messages in Hindi or other languages are translated to English first (Sarvam for a selected supported Indic language, otherwise the configured local Ollama model), then classified locally with `cardiffnlp/twitter-roberta-base-sentiment-latest`. The classifier is downloaded on first use and cached by Hugging Face. Set `LOCAL_SENTIMENT_LOCAL_FILES_ONLY=true` after pre-downloading it for a fully offline deployment, or `LOCAL_SENTIMENT_ENABLED=false` to use the deterministic fallback.
+
 Admins can upload PDF knowledge from `/bank/admin/knowledge`. The backend extracts page-aware chunks with `pypdf`, generates 768-dimensional vectors using local `nomic-embed-text`, and stores them in PostgreSQL with `pgvector`. Uploaded documents default to internal access; only documents explicitly approved for the customer audience are searched by customer chat. PDF matches are searched before curated article matches and responses include document/page citations.
 
 The login-page assistant stores public conversations separately from signed-in customer chats. Bank employees can review them under **External Chats**. When a visitor expresses product interest, the assistant asks for name, phone, and email before continuing; completed contacts appear under **External Leads**. Visitors can type `Skip` to continue without creating a lead. The public session is resumed in the same browser using a random session token.
