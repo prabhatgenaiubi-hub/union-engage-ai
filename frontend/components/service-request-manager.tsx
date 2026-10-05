@@ -3,15 +3,15 @@ import {useEffect,useMemo,useState} from "react";
 import {ArrowDownUp,ArrowLeft,ArrowRight,CalendarDays,ChevronDown,Clock3,FileText,MessageSquarePlus,MoreVertical,RotateCcw,Search,ShieldAlert,X} from "lucide-react";
 import {api} from "@/lib/api";
 
-type RequestRow={id:number;request_code:string;customer_id:number;customer_code:string;customer_name:string;category:string;issue:string;priority:string;status:string;assigned_queue:string;escalation_level:string;routing_reason:string;created_at:string};
+type RequestRow={id:number;request_code:string;customer_id:number;customer_code:string;customer_name:string;category:string;issue:string;priority:string;status:string;assigned_queue:string;escalation_level:string;routing_reason:string;created_at:string;updated_at:string};
 type Comment={id:number;comment:string;author_name:string;created_at:string};
 type RequestMessage={id:number;message:string;sender_name:string;sender_type:"customer"|"employee";created_at:string};
 const statuses=["Open","In Progress","Awaiting Customer","Resolved","Closed"];
-const PAGE_SIZE=10;
+const PAGE_SIZE=25;
 
 export function ServiceRequestManager(){
  const [rows,setRows]=useState<RequestRow[]>([]),[selected,setSelected]=useState<RequestRow|null>(null),[comments,setComments]=useState<Comment[]>([]),[comment,setComment]=useState(""),[messages,setMessages]=useState<RequestMessage[]>([]),[message,setMessage]=useState(""),[q,setQ]=useState("");
- const [category,setCategory]=useState("All"),[status,setStatus]=useState("All"),[priority,setPriority]=useState("All"),[queue,setQueue]=useState("All"),[days,setDays]=useState("30"),[page,setPage]=useState(1),[saving,setSaving]=useState(false),[error,setError]=useState("");
+ const [category,setCategory]=useState("All"),[status,setStatus]=useState("All"),[priority,setPriority]=useState("All"),[queue,setQueue]=useState("All"),[days,setDays]=useState("All"),[page,setPage]=useState(1),[saving,setSaving]=useState(false),[error,setError]=useState("");
  const load=()=>api<RequestRow[]>("/service-requests").then(setRows).catch((e:any)=>setError(e.message));
  useEffect(()=>{load()},[]);
  const options=useMemo(()=>({categories:unique(rows.map(r=>r.category)),statuses:unique(rows.map(r=>r.status)),priorities:unique(rows.map(r=>r.priority)),queues:unique(rows.map(r=>r.assigned_queue||"Standard Queue"))}),[rows]);
@@ -19,13 +19,13 @@ export function ServiceRequestManager(){
  const pageCount=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
  useEffect(()=>setPage(1),[q,category,status,priority,queue,days]);
  const visible=filtered.slice((page-1)*PAGE_SIZE,page*PAGE_SIZE);
- const stats=useMemo(()=>({total:rows.length,open:rows.filter(r=>r.status==="Open").length,waiting:rows.filter(r=>r.status==="Awaiting Customer").length,escalated:rows.filter(r=>r.status==="Escalated"||(r.escalation_level&&r.escalation_level!=="None")).length,resolved:rows.filter(r=>r.status==="Resolved"&&isToday(r.created_at)).length}),[rows]);
- const hasFilters=Boolean(q||category!=="All"||status!=="All"||priority!=="All"||queue!=="All"||days!=="30");
+ const stats=useMemo(()=>({total:rows.length,open:rows.filter(r=>r.status==="Open").length,waiting:rows.filter(r=>r.status==="Awaiting Customer").length,escalated:rows.filter(r=>r.status==="Escalated"||(r.escalation_level&&r.escalation_level!=="None")).length,resolved:rows.filter(r=>r.status==="Resolved"&&isToday(r.updated_at)).length}),[rows]);
+ const hasFilters=Boolean(q||category!=="All"||status!=="All"||priority!=="All"||queue!=="All"||days!=="All");
  async function open(row:RequestRow){setSelected(row);setError("");setComment("");setMessage("");try{const [notes,thread]=await Promise.all([api<Comment[]>(`/service-requests/${row.id}/comments`),api<RequestMessage[]>(`/service-requests/${row.id}/messages`)]);setComments(notes);setMessages(thread)}catch(e:any){setError(e.message)}}
  async function changeStatus(next:string){if(!selected)return;setSaving(true);setError("");try{const updated=await api<RequestRow>(`/service-requests/${selected.id}`,{method:"PATCH",body:JSON.stringify({status:next})});setSelected(updated);setRows(items=>items.map(item=>item.id===updated.id?updated:item))}catch(e:any){setError(e.message)}finally{setSaving(false)}}
  async function addComment(){if(!selected||!comment.trim())return;setSaving(true);setError("");try{const added=await api<Comment>(`/service-requests/${selected.id}/comments`,{method:"POST",body:JSON.stringify({comment})});setComments(items=>[...items,added]);setComment("")}catch(e:any){setError(e.message)}finally{setSaving(false)}}
  async function sendMessage(){if(!selected||!message.trim())return;setSaving(true);setError("");try{const added=await api<RequestMessage>(`/service-requests/${selected.id}/messages`,{method:"POST",body:JSON.stringify({message})});setMessages(items=>[...items,added]);setMessage("")}catch(e:any){setError(e.message)}finally{setSaving(false)}}
- function clearFilters(){setQ("");setCategory("All");setStatus("All");setPriority("All");setQueue("All");setDays("30")}
+ function clearFilters(){setQ("");setCategory("All");setStatus("All");setPriority("All");setQueue("All");setDays("All")}
  return <div className="requests-page">
   <header className="requests-heading"><div><h1>Service requests</h1><p>Review requests, update progress, and record internal notes.</p></div><p className="requests-motto">Digital Banking with a Personal Touch<i/></p></header>
   <section className="request-kpis"><Kpi icon={<FileText/>} value={stats.total} label="Total Requests" trend="↑ 20%" note="vs last 7 days" tone="blue"/><Kpi icon={<Clock3/>} value={stats.open} label="Open" trend="↑ 1" note="vs last 7 days" tone="purple"/><Kpi icon={<Clock3/>} value={stats.waiting} label="Awaiting Customer" trend="→ 0" note="vs last 7 days" tone="amber"/><Kpi icon={<ShieldAlert/>} value={stats.escalated} label="Escalated" trend="↑ 1" note="vs last 7 days" tone="red"/><Kpi icon={<FileText/>} value={stats.resolved} label="Resolved (Today)" trend="→ 0" note="vs last 7 days" tone="green"/></section>
@@ -37,7 +37,7 @@ export function ServiceRequestManager(){
 function unique(values:string[]){return [...new Set(values.filter(Boolean))].sort()}
 function isToday(value:string){const date=new Date(value),today=new Date();return date.toDateString()===today.toDateString()}
 function formatDate(value:string){const date=new Date(value);return <>{date.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}<br/>{date.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}</>}
-function Kpi({icon,value,label,trend,note,tone}:{icon:React.ReactNode;value:number;label:string;trend:string;note:string;tone:string}){return <article className={`request-kpi ${tone}`}><span>{icon}</span><div><strong>{value}</strong><b>{label}</b></div><aside><b>{trend}</b><small>{note}</small></aside></article>}
+function Kpi({icon,value,label,tone}:{icon:React.ReactNode;value:number;label:string;tone:string;trend?:string;note?:string}){return <article className={`request-kpi ${tone}`}><span>{icon}</span><div><strong>{value}</strong><b>{label}</b></div></article>}
 function Filter({label,value,options,onChange}:{label:string;value:string;options:string[];onChange:(value:string)=>void}){return <label className="request-filter"><span>{label}</span><select value={value} onChange={e=>onChange(e.target.value)}><option>All</option>{options.map(option=><option key={option}>{option}</option>)}</select><ChevronDown/></label>}
 function Badge({value,kind}:{value:string;kind:string}){const key=value.toLowerCase().replaceAll(" ","-");return <span className={`request-badge ${kind}-${key}`}>{value}</span>}
 function DrawerSection({title,description,items,empty,value,setValue,placeholder,button,disabled,action,internal=false}:{title:string;description:string;items:{id:number;text:string;meta:string;className:string}[];empty:string;value:string;setValue:(v:string)=>void;placeholder:string;button:string;disabled:boolean;action:()=>void;internal?:boolean}){return <div className={`drawer-section ${internal?"internal":""}`}><h3>{title}</h3><p>{description}</p><div className="drawer-thread">{items.map(item=><div key={item.id} className={item.className}><span>{item.text}</span><small>{item.meta}</small></div>)}{!items.length&&<p className="drawer-empty">{empty}</p>}</div><textarea className="input" maxLength={2000} placeholder={placeholder} value={value} onChange={e=>setValue(e.target.value)}/><button className="btn-primary" disabled={disabled} onClick={action}>{button}</button></div>}

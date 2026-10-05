@@ -26,8 +26,8 @@ def customer_engagement(db:Session,customer_id:int)->dict:
     conversation=db.query(Conversation).filter_by(customer_id=customer_id).order_by(Conversation.updated_at.desc()).first()
     if not conversation:return engagement_decision("Neutral","In Progress")
     latest=db.query(InteractionAnalysis).join(Message).filter(Message.conversation_id==conversation.id).order_by(Message.created_at.desc()).first()
-    open_request=db.query(ServiceRequest).filter(ServiceRequest.customer_id==customer_id,ServiceRequest.status.notin_(["Resolved","Closed"])).first()
-    return engagement_decision(latest.sentiment if latest else conversation.sentiment,conversation.resolution_status,latest.complaint if latest else False,bool(open_request))
+    open_request=db.query(ServiceRequest).filter(ServiceRequest.customer_id==customer_id,ServiceRequest.status.notin_(["Resolved","Closed"])).order_by(ServiceRequest.created_at.desc()).first()
+    return engagement_decision(latest.sentiment if latest else conversation.sentiment,conversation.resolution_status,latest.complaint if latest else False,bool(open_request),open_request.request_code if open_request else None)
 def customer_experience_scores(db:Session,customer_id:int,limit:int=10)->dict:
     conversations=db.query(Conversation).filter_by(customer_id=customer_id).order_by(Conversation.updated_at.desc(),Conversation.id.desc()).limit(limit).all()
     scores=[];defaulted=0
@@ -240,8 +240,8 @@ def customer360(customer_id:int,user:User=Depends(bank_user),db:Session=Depends(
     if risk: insights.append(f"{risk.level} attrition risk; prioritize service recovery" if risk.level in ["High","Critical"] else f"{risk.level} attrition risk")
     engagement=customer_engagement(db,c.id)
     recommended=[engagement["action"]]
-    if engagement["eligible"]:recommended+= ["Review next-best-product relevance with the customer","Keep all outbound communication subject to employee approval"]
-    else:recommended+= ["Do not present sales offers while service recovery is active","Reassess engagement only after a positive resolution signal"]
+    if engagement.get("warning"):recommended+= ["Prioritize service recovery before promotional outreach","Keep all outbound communication subject to employee approval"]
+    else:recommended+= ["Review next-best-product relevance with the customer","Keep all outbound communication subject to employee approval"]
     return {"customer":serialize(c),"conversations":[serialize(x) for x in conv],"service_requests":[serialize(x) for x in req],"leads":[serialize(x) for x in leads],"opportunities":[serialize(x) for x in opp],"retention":serialize(risk) if risk else None,"goals":[serialize(x) for x in goals],"ai_insights":insights,"engagement":engagement,"recommended_actions":recommended}
 @router.get("/leads",tags=["Bank Intelligence"])
 def leads(user:User=Depends(bank_user),db:Session=Depends(get_db)): return [serialize(x) for x in db.query(Lead).order_by(Lead.created_at.desc()).all()]
@@ -266,10 +266,15 @@ def opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
         formatted=format_customer_message(item.communication_draft,customer.name if customer else None)
         if item.communication_draft!=formatted:item.communication_draft=formatted
     db.commit()
-    return [{**serialize(item),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","customer_phone":customers[item.customer_id].phone_number if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in rows]
+    return [{**serialize(item),"customer_code":customers[item.customer_id].customer_code if item.customer_id in customers else str(item.customer_id),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","customer_phone":customers[item.customer_id].phone_number if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in rows]
 @router.post("/opportunities/refresh",tags=["Bank Intelligence"])
 def refresh_opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     created=identify_opportunities(db);db.add(AuditLog(user_id=user.id,action="OPPORTUNITIES_REFRESHED",entity="opportunity",entity_id="batch",metadata_json={"created":len(created)}));db.commit();return {"created":len(created)}
+@router.get("/opportunities/{item_id}/engagement",tags=["Bank Intelligence"])
+def opportunity_engagement(item_id:int,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    item=db.get(Opportunity,item_id)
+    if not item: raise HTTPException(404,"Opportunity not found")
+    return {"opportunity_id":item.id,"customer_id":item.customer_id,"engagement":customer_engagement(db,item.customer_id),"checked_at":datetime.utcnow()}
 @router.patch("/opportunities/{item_id}",tags=["Bank Intelligence"])
 def update_opportunity(item_id:int,payload:OpportunityReview,user:User=Depends(bank_user),db:Session=Depends(get_db)):
     item=db.get(Opportunity,item_id)

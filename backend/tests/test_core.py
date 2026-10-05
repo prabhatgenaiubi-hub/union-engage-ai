@@ -328,9 +328,9 @@ def test_customer_sentiment_history_is_scoped_to_same_customer(client,customer_h
  assert sessions[0]["csat"] is None and sessions[0]["nps"] is None
  assert sessions[1]["csat"]==2 and sessions[1]["nps"]==4
 def test_sentiment_controls_subsequent_engagement():
- blocked=engagement_decision("Highly Negative","Unresolved",complaint=True); assert not blocked["eligible"] and blocked["state"]=="Service Recovery"
+ blocked=engagement_decision("Highly Negative","Unresolved",complaint=True,service_request_code="SR-2026-000001"); assert blocked["eligible"] and blocked["warning"] and blocked["state"]=="Service Recovery Warning" and blocked["service_request_code"]=="SR-2026-000001"
  eligible=engagement_decision("Positive","Answered"); assert eligible["eligible"] and eligible["state"]=="Engagement Opportunity"
- open_case=engagement_decision("Positive","Resolved",has_open_request=True); assert not open_case["eligible"]
+ open_case=engagement_decision("Positive","Resolved",has_open_request=True); assert open_case["eligible"] and open_case["warning"]
  assert engagement_decision("Neutral","In Progress")["eligible"]
 def test_home_loan_qualification_journey(client,customer_headers):
  response=client.post("/api/chat",headers=customer_headers,json={"message":"I am thinking about buying a house."}).json(); conversation_id=response["conversation_id"]
@@ -386,7 +386,9 @@ def test_product_recommendation_generation_and_review(client,customer_headers,ad
  refreshed=client.post("/api/opportunities/refresh",headers=admin_headers);assert refreshed.status_code==200 and refreshed.json()["created"]>=1
  client.post("/api/chat",headers=customer_headers,json={"message":"Thank you, my question is resolved."})
  opportunities=client.get("/api/opportunities",headers=admin_headers).json();fixed=next(item for item in opportunities if item["product"]=="Fixed Deposit")
+ assert fixed["customer_code"]=="T001"
  assert fixed["reason"] and fixed["trigger"] and fixed["suggested_action"] and fixed["communication_draft"] and fixed["engagement"]["eligible"]
+ refreshed_status=client.get(f"/api/opportunities/{fixed['id']}/engagement",headers=admin_headers); assert refreshed_status.status_code==200 and refreshed_status.json()["opportunity_id"]==fixed["id"] and "warning" in refreshed_status.json()["engagement"]
  approved=client.patch(f"/api/opportunities/{fixed['id']}",headers=admin_headers,json={"status":"Approved","communication_draft":fixed["communication_draft"]});assert approved.status_code==200 and approved.json()["status"]=="Approved" and approved.json()["reviewed_by"]
 def test_approved_opportunity_email_uses_provider(client,customer_headers,admin_headers,monkeypatch):
  from app.db.session import SessionLocal

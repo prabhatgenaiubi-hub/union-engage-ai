@@ -17,6 +17,7 @@ export function OpportunityManager(){
   const [fromDate,setFromDate]=useState("");
   const [toDate,setToDate]=useState("");
   const [saving,setSaving]=useState<number>();
+  const [refreshing,setRefreshing]=useState<number>();
   const [error,setError]=useState("");
   const [emailDraft,setEmailDraft]=useState<EmailDraft|null>(null);
   const load=()=>api<any[]>("/opportunities").then(setItems).catch((e:any)=>setError(e.message));
@@ -37,6 +38,15 @@ export function OpportunityManager(){
       const updated=await api<any>(`/opportunities/${item.id}`,{method:"PATCH",body:JSON.stringify({status,communication_draft:item.communication_draft})});
       setItems(rows=>rows.map(row=>row.id===item.id?{...row,...updated}:row));
     }catch(e:any){setError(e.message)}finally{setSaving(undefined)}
+  }
+
+  async function refreshEngagement(item:any){
+    setRefreshing(item.id);
+    setError("");
+    try{
+      const result=await api<any>(`/opportunities/${item.id}/engagement`);
+      setItems(rows=>rows.map(row=>row.id===item.id?{...row,engagement:result.engagement}:row));
+    }catch(e:any){setError(e.message)}finally{setRefreshing(undefined)}
   }
 
   function openEmailEditor(item:any){
@@ -63,18 +73,18 @@ export function OpportunityManager(){
       <div className="flex flex-wrap gap-2"><label className="relative"><Search className="absolute left-3 top-3 text-slate-400" size={17}/><input className="input pl-9" placeholder="Search opportunities" value={q} onChange={e=>setQ(e.target.value)}/></label><label className="relative"><CalendarDays className="absolute left-3 top-3 text-slate-400" size={17}/><input aria-label="Opportunities from date" type="date" className="input pl-9" value={fromDate} onChange={e=>setFromDate(e.target.value)}/></label><label className="relative"><CalendarDays className="absolute left-3 top-3 text-slate-400" size={17}/><input aria-label="Opportunities to date" type="date" className="input pl-9" min={fromDate} value={toDate} onChange={e=>setToDate(e.target.value)}/></label><button onClick={refresh} className="btn-secondary"><RefreshCw size={16}/>Refresh</button></div>
     </div>
     {error&&<p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-    <div className="mt-6 grid gap-5 xl:grid-cols-2">{visible.map(item=><OpportunityCard key={item.id} item={item} saving={saving===item.id} setItems={setItems} review={review} openEmailEditor={openEmailEditor}/>)}{!visible.length&&<div className="card p-12 text-center text-slate-500 xl:col-span-2">No matching opportunities.</div>}</div>
+    <div className="mt-6 grid gap-5 xl:grid-cols-2">{visible.map(item=><OpportunityCard key={item.id} item={item} saving={saving===item.id} refreshing={refreshing===item.id} setItems={setItems} review={review} refreshEngagement={refreshEngagement} openEmailEditor={openEmailEditor}/>)}{!visible.length&&<div className="card p-12 text-center text-slate-500 xl:col-span-2">No matching opportunities.</div>}</div>
     {emailDraft&&<EmailEditor draft={emailDraft} setDraft={setEmailDraft} saving={saving===emailDraft.item.id} error={error} onSend={sendEmail}/>} 
   </>;
 }
 
-function OpportunityCard({item,saving,setItems,review,openEmailEditor}:{item:any;saving:boolean;setItems:React.Dispatch<React.SetStateAction<any[]>>;review:(item:any,status:string)=>void;openEmailEditor:(item:any)=>void}){
+function OpportunityCard({item,saving,refreshing,setItems,review,refreshEngagement,openEmailEditor}:{item:any;saving:boolean;refreshing:boolean;setItems:React.Dispatch<React.SetStateAction<any[]>>;review:(item:any,status:string)=>void;refreshEngagement:(item:any)=>void;openEmailEditor:(item:any)=>void}){
   const locked=item.status==="Approved"||item.status==="Email Sent";
   const emailEnabled=item.engagement?.eligible&&!!item.communication_draft?.trim()&&item.status==="Approved";
   return <section className="card p-6">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold text-brand">{item.customer_name} &bull; Customer {item.customer_id}</p><h2 className="mt-1 text-xl font-bold text-navy">{item.product}</h2><p className="mt-1 text-xs text-slate-400">Created {new Date(item.created_at).toLocaleDateString()}</p></div><div className="text-right"><span className="text-2xl font-bold text-navy">{item.score}</span><span className="text-xs text-slate-400">/100</span><p className="text-xs text-slate-500">{item.status}</p></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold text-brand">{item.customer_name} &bull; Customer ID: {item.customer_code||item.customer_id}</p><h2 className="mt-1 text-xl font-bold text-navy">{item.product}</h2><p className="mt-1 text-xs text-slate-400">Created {new Date(item.created_at).toLocaleDateString()}</p></div><div className="text-right"><span className="text-2xl font-bold text-navy">{item.score}</span><span className="text-xs text-slate-400">/100</span><p className="text-xs text-slate-500">{item.status}</p></div></div>
     <div className="mt-5 space-y-3 text-sm"><Info label="Why this product" value={item.reason}/><Info label="Lifecycle/profile trigger" value={item.trigger}/><Info label="Suggested engagement" value={item.suggested_action}/><Info label="Phone number" value={item.customer_phone||"No phone number available"} icon={<Phone size={14}/>}/><Info label="Email recipient" value={item.customer_email||"No email address available"}/></div>
-    <div className={`mt-5 rounded-xl p-4 ${item.engagement?.eligible?"bg-emerald-50 text-emerald-800":"bg-red-50 text-red-800"}`}><p className="font-semibold">{item.engagement?.state}</p><p className="mt-1 text-xs leading-5">{item.engagement?.action}</p>{!item.engagement?.eligible&&<p className="mt-2 text-xs font-semibold">Email is disabled until service recovery is complete.</p>}</div>
+    <div className={`mt-5 rounded-xl p-4 ${item.engagement?.warning?"bg-amber-50 text-amber-900":"bg-emerald-50 text-emerald-800"}`}><div className="flex items-center justify-between gap-3"><p className="font-semibold">{item.engagement?.state}</p><button aria-label="Refresh service-recovery status" title="Refresh service-recovery status" className="btn-secondary !border-current !bg-transparent !p-2" disabled={refreshing} onClick={()=>refreshEngagement(item)}><RefreshCw className={refreshing?"animate-spin":""} size={15}/></button></div><p className="mt-1 text-xs leading-5">{item.engagement?.action}</p>{item.engagement?.warning&&<><p className="mt-2 text-xs font-semibold">Warning reason: {item.engagement?.reasons?.join(" • ")||"Service recovery requires attention"}</p><p className="mt-2 text-xs font-semibold">Service request: {item.engagement?.service_request_code||"No open service request"}</p><p className="mt-2 text-xs font-semibold">Sentiment warning: recent customer sentiment may indicate dissatisfaction. Review the latest interaction before approving or sending this communication.</p></>}</div>
     <label className="mt-5 block text-sm font-semibold"><span className="flex items-center gap-2"><Sparkles size={16} className="text-brand"/>Personalized communication draft</span><textarea className={`input mt-2 min-h-32 leading-6 ${locked?"bg-slate-100 text-slate-600":""}`} disabled={locked} maxLength={2000} value={item.communication_draft||""} onChange={e=>setItems(rows=>rows.map(row=>row.id===item.id?{...row,communication_draft:e.target.value}:row))}/></label>
     <p className="mt-2 text-xs text-slate-400">{locked?"Content is locked. Choose Edit content to make changes.":"Review the draft and approve it before sending."}</p>
     <div className="mt-4 flex flex-wrap gap-2">{!locked&&<button className="btn-primary" disabled={saving||!item.engagement?.eligible||!item.communication_draft?.trim()} onClick={()=>review(item,"Approved")}>Approve content</button>}{locked&&<button className="btn-secondary" disabled={saving} onClick={()=>review(item,"Pending Review")}>Edit content</button>}<button className="btn-secondary" disabled={saving||!emailEnabled} onClick={()=>openEmailEditor(item)}><Mail size={16}/>{saving?"Please wait…":item.status==="Email Sent"?"Email sent":"Review & send email"}</button></div>
