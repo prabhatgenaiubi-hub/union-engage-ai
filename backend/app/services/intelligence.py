@@ -8,6 +8,24 @@ from app.services.local_sentiment import analyze_english_sentiment
 
 logger = logging.getLogger(__name__)
 
+def _huggingface_chat_response(messages:list[dict]) -> str | None:
+    """Return a customer-chat reply from GPT-OSS without affecting other AI workflows."""
+    if not settings.hf_chat_token:
+        return None
+    try:
+        result=httpx.post(
+            f"{settings.hf_chat_base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization":f"Bearer {settings.hf_chat_token}","Content-Type":"application/json"},
+            json={"model":settings.hf_chat_model,"messages":messages,"max_tokens":settings.hf_chat_max_tokens,"temperature":0.2},
+            timeout=settings.hf_chat_timeout_seconds,
+        )
+        result.raise_for_status()
+        answer=result.json()["choices"][0]["message"].get("content","").strip()
+        return answer or None
+    except (httpx.HTTPError,ValueError,KeyError,IndexError) as exc:
+        logger.warning("Hugging Face customer-chat provider unavailable; falling back to Sarvam: %s",exc)
+        return None
+
 def _translate_with_ollama(text:str)->str:
     if not settings.local_translation_enabled or not text.strip():
         return text
@@ -260,7 +278,11 @@ class SarvamAIProvider(MockAIProvider):
         return {"api-subscription-key": settings.sarvam_api_key, "Content-Type": "application/json"}
 
     def to_english(self,text:str,language_code:str="auto")->str:
-        if language_code in ("auto", "en-IN") or not settings.sarvam_api_key:
+        # English input must not be paraphrased by a local translation model.
+        # In particular, names, email addresses, and other identifiers must remain exact.
+        if language_code == "en-IN":
+            return text
+        if language_code == "auto" or not settings.sarvam_api_key:
             return _translate_with_ollama(text)
         try:
             result=httpx.post(
@@ -322,6 +344,9 @@ Approved bank knowledge:\n{approved_context}"""}]
             messages[0]["content"] += f"\nRequired response behavior: {response_guidance} Translate the question into the selected response language."
         messages.extend({"role":item["role"],"content":item["content"]} for item in (history or [])[-6:])
         messages.append({"role":"user","content":text})
+        hf_answer=_huggingface_chat_response(messages)
+        if hf_answer:
+            return hf_answer if self._uses_target_script(hf_answer,language_code) else self._translate_response(hf_answer,language_code)
         try:
             result=httpx.post(
                 f"{settings.sarvam_base_url.rstrip('/')}/v1/chat/completions",

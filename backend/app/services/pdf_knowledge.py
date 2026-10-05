@@ -10,6 +10,7 @@ from app.models import KnowledgeChunk, KnowledgeDocument
 MAX_PDF_BYTES=25*1024*1024
 CHUNK_SIZE=1400
 CHUNK_OVERLAP=220
+EMBEDDING_DIMENSIONS=1024
 
 def _clean(text:str)->str:
     text=text.replace("\x00","")
@@ -31,7 +32,7 @@ def _chunks(text:str)->list[str]:
 def embed_texts(texts:list[str])->list[list[float]]:
     response=httpx.post(f"{settings.ollama_base_url.rstrip('/')}/api/embed",json={"model":settings.ollama_embedding_model,"input":texts},timeout=settings.ollama_embedding_timeout_seconds)
     response.raise_for_status(); vectors=response.json().get("embeddings",[])
-    if len(vectors)!=len(texts) or any(len(vector)!=768 for vector in vectors):raise ValueError("Embedding provider returned an unexpected vector shape")
+    if len(vectors)!=len(texts) or any(len(vector)!=EMBEDDING_DIMENSIONS for vector in vectors):raise ValueError(f"Embedding provider returned an unexpected vector shape; expected {EMBEDDING_DIMENSIONS} dimensions from {settings.ollama_embedding_model}")
     return vectors
 
 def ingest_pdf(db:Session,data:bytes,filename:str,title:str,audience:str,user_id:int)->KnowledgeDocument:
@@ -49,7 +50,7 @@ def ingest_pdf(db:Session,data:bytes,filename:str,title:str,audience:str,user_id
         for offset in range(0,len(pending),16):
             batch=pending[offset:offset+16]; vectors=embed_texts([item[2] for item in batch])
             for (page_number,index,content),vector in zip(batch,vectors):db.add(KnowledgeChunk(document_id=document.id,page_number=page_number,chunk_index=index,content=content,embedding=vector))
-        document.page_count=len(reader.pages);document.chunk_count=len(pending);document.status="Approved" if audience=="customer" else "Internal"
+        document.page_count=len(reader.pages);document.chunk_count=len(pending);document.status="Approved" if audience=="customer" else "Pending Approval"
         db.commit();db.refresh(document);return document
     except Exception as exc:
         db.rollback()

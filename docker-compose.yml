@@ -24,10 +24,15 @@ services:
       SARVAM_BASE_URL: https://api.sarvam.ai
       SARVAM_CHAT_MODEL: sarvam-105b-conversations
       SARVAM_SPEECH_MODEL: saaras:v3
+      HF_CHAT_TOKEN: ${HF_CHAT_TOKEN:-}
+      HF_CHAT_BASE_URL: https://router.huggingface.co/v1
+      HF_CHAT_MODEL: openai/gpt-oss-120b:cerebras
+      HF_CHAT_MAX_TOKENS: 550
+      HF_CHAT_TIMEOUT_SECONDS: 90
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: llama3:latest
       OLLAMA_TIMEOUT_SECONDS: 90
-      OLLAMA_EMBEDDING_MODEL: nomic-embed-text:latest
+      OLLAMA_EMBEDDING_MODEL: bge-m3
       OLLAMA_EMBEDDING_TIMEOUT_SECONDS: 180
       LOCAL_SENTIMENT_MODEL: cardiffnlp/twitter-roberta-base-sentiment-latest
       LOCAL_SENTIMENT_ENABLED: "true"

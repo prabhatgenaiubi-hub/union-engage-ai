@@ -56,7 +56,7 @@ def _question(product:str,field:str)->str|None:
 
 def qualify(lead:Lead,text:str,latest_text:str|None=None)->dict:
     """Update every fact found in accumulated conversation context on every turn."""
-    data=dict(lead.qualification_data or {});t=" ".join(text.lower().split());latest=" ".join((latest_text or text).lower().split())
+    data=dict(lead.qualification_data or {});t=" ".join(text.lower().split());latest=" ".join((latest_text or text).lower().split());normalized_latest=latest.rstrip(" .,!?")
     required=_amount_near(t,[r"(?:loan|amount|need|require|want)"])
     income=_amount_near(t,[r"(?:monthly\s+)?(?:income|salary|earn(?:ing|s)?|in[ -]?hand)"])
     emi=_amount_near(t,[r"(?:existing\s+)?emi"])
@@ -73,7 +73,7 @@ def qualify(lead:Lead,text:str,latest_text:str|None=None)->dict:
     missing=next((field for field in FIELDS if field not in data),None)
     plain_amount=re.fullmatch(r"(?:₹|rs\.?\s*)?([0-9][0-9,]*(?:\.[0-9]+)?)\s*(lakh|lac|crore|k)?(?:\s+per\s+month)?",latest,re.I)
     if missing in ["required_amount","monthly_income","existing_emi"] and plain_amount:data[missing]=_amount_value(plain_amount.group(1),plain_amount.group(2))
-    elif missing=="existing_emi" and latest in ["zero","none","no"]:data[missing]=0
+    elif missing=="existing_emi" and normalized_latest in ["zero","none","no","0"]:data[missing]=0
     elif missing=="location" and re.fullmatch(r"[a-z][a-z .-]{1,40}",latest):data[missing]=(latest_text or text).strip().title()
     elif missing=="timeline" and len(latest)>1:data[missing]=(latest_text or text).strip()[:80]
     next_field=next((field for field in FIELDS if field not in data),None)

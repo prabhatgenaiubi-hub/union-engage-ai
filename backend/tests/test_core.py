@@ -87,6 +87,13 @@ def test_public_interest_collects_contact_and_saves_external_lead(client,admin_h
  assert len(detail["messages"])==8
  history=client.get(f"/api/public/chat/{session_id}").json()
  assert len(history["messages"])==8
+
+def test_public_contact_name_is_not_translated_before_validation(client,monkeypatch):
+ from app.services import public_chat_session as service
+ monkeypatch.setattr(service.provider,"to_english",lambda *_:"Please provide your name.")
+ first=client.post("/api/public/chat",json={"message":"I want a savings account"}).json()
+ answer=client.post("/api/public/chat",json={"message":"Prabhat","session_id":first["session_id"]}).json()
+ assert answer["contact_step"]=="phone" and "phone" in answer["message"].lower()
 def test_public_information_question_does_not_capture_lead(client):
  response=client.post("/api/public/chat",json={"message":"What documents are needed for a home loan?"}).json()
  assert response["contact_step"]=="" and "phone number" not in response["message"].lower()
@@ -171,6 +178,28 @@ def test_personal_loan_lead_uses_conversation_context(client,customer_headers,ad
  assert lead["product"]=="Personal Loan" and lead["qualification_data"]["required_amount"]==1000000
  informational=client.post("/api/chat",headers=customer_headers,json={"message":"What does the term personal loan mean?"}).json()
  assert informational["lead"] is None
+def test_personal_loan_accepts_zero_with_punctuation_and_filters_other_loan_knowledge(client,customer_headers,monkeypatch):
+ from app.services import chat as chat_service
+ from app.services.knowledge import KnowledgeMatch
+ monkeypatch.setattr(chat_service.knowledge_retriever,"search",lambda *args:[KnowledgeMatch(1,"Education loan guide","Loans","Use the Vidya Lakshmi portal for an education loan.",9),KnowledgeMatch(2,"Personal loan guide","Loans","Personal loan applications are reviewed by the bank.",8)])
+ monkeypatch.setattr(chat_service,"retrieve_pdf_chunks",lambda *args,**kwargs:[])
+ conversation_id=None
+ for message in ["I need a personal loan of 12 lakhs","My monthly income is 60000","Teacher","0."]:
+  reply=client.post("/api/chat",headers=customer_headers,json={"message":message,"conversation_id":conversation_id}).json();conversation_id=reply["conversation_id"]
+ assert reply["lead"]["collected"]["existing_emi"]==0
+ assert reply["lead"]["next_question"]=="Which city are you based in?"
+ assert [item["title"] for item in reply["knowledge_sources"]]==["Personal loan guide"]
+def test_customer_chat_greeting_skips_rag(client,customer_headers,monkeypatch):
+ from app.services import chat as chat_service
+ monkeypatch.setattr(chat_service.provider,"to_english",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("Translation should not run")))
+ monkeypatch.setattr(chat_service,"retrieve_pdf_chunks",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("PDF RAG should not run")))
+ monkeypatch.setattr(chat_service.knowledge_retriever,"search",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("Article RAG should not run")))
+ reply=client.post("/api/chat",headers=customer_headers,json={"message":"Good morning"}).json()
+ assert reply["grounded"] is False and "what would you like to know" in reply["message"].lower()
+def test_product_filter_supports_pdf_result_dicts():
+ from app.services.chat import product_relevant_matches
+ matches=[{"title":"Education Loan PDF","category":"PDF Knowledge","content":"Vidya Lakshmi education loan guidance"},{"title":"Personal Loan PDF","category":"PDF Knowledge","content":"Personal loan guidance"}]
+ assert [item["title"] for item in product_relevant_matches(matches,"Personal Loan")]==["Personal Loan PDF"]
 def test_attrition_scoring():
  a=provider.analyze("This is the third time. I am fed up and want to close my account"); score,level,reasons=retention(a); assert score>=80 and level=="Critical" and reasons
 
@@ -328,9 +357,9 @@ def test_customer_sentiment_history_is_scoped_to_same_customer(client,customer_h
  assert sessions[0]["csat"] is None and sessions[0]["nps"] is None
  assert sessions[1]["csat"]==2 and sessions[1]["nps"]==4
 def test_sentiment_controls_subsequent_engagement():
- blocked=engagement_decision("Highly Negative","Unresolved",complaint=True); assert not blocked["eligible"] and blocked["state"]=="Service Recovery"
+ blocked=engagement_decision("Highly Negative","Unresolved",complaint=True,service_request_code="SR-2026-000001"); assert blocked["eligible"] and blocked["warning"] and blocked["state"]=="Service Recovery Warning" and blocked["service_request_code"]=="SR-2026-000001"
  eligible=engagement_decision("Positive","Answered"); assert eligible["eligible"] and eligible["state"]=="Engagement Opportunity"
- open_case=engagement_decision("Positive","Resolved",has_open_request=True); assert not open_case["eligible"]
+ open_case=engagement_decision("Positive","Resolved",has_open_request=True); assert open_case["eligible"] and open_case["warning"]
  assert engagement_decision("Neutral","In Progress")["eligible"]
 def test_home_loan_qualification_journey(client,customer_headers):
  response=client.post("/api/chat",headers=customer_headers,json={"message":"I am thinking about buying a house."}).json(); conversation_id=response["conversation_id"]
@@ -386,7 +415,9 @@ def test_product_recommendation_generation_and_review(client,customer_headers,ad
  refreshed=client.post("/api/opportunities/refresh",headers=admin_headers);assert refreshed.status_code==200 and refreshed.json()["created"]>=1
  client.post("/api/chat",headers=customer_headers,json={"message":"Thank you, my question is resolved."})
  opportunities=client.get("/api/opportunities",headers=admin_headers).json();fixed=next(item for item in opportunities if item["product"]=="Fixed Deposit")
+ assert fixed["customer_code"]=="T001"
  assert fixed["reason"] and fixed["trigger"] and fixed["suggested_action"] and fixed["communication_draft"] and fixed["engagement"]["eligible"]
+ refreshed_status=client.get(f"/api/opportunities/{fixed['id']}/engagement",headers=admin_headers); assert refreshed_status.status_code==200 and refreshed_status.json()["opportunity_id"]==fixed["id"] and "warning" in refreshed_status.json()["engagement"]
  approved=client.patch(f"/api/opportunities/{fixed['id']}",headers=admin_headers,json={"status":"Approved","communication_draft":fixed["communication_draft"]});assert approved.status_code==200 and approved.json()["status"]=="Approved" and approved.json()["reviewed_by"]
 def test_approved_opportunity_email_uses_provider(client,customer_headers,admin_headers,monkeypatch):
  from app.db.session import SessionLocal
@@ -454,7 +485,28 @@ def test_chat_dynamically_creates_and_updates_sales_opportunity(client,customer_
 def test_customer_can_view_only_own_profile(client,customer_headers,admin_headers):
  profile=client.get("/api/customer/profile",headers=customer_headers);assert profile.status_code==200
  assert profile.json()["customer_code"]=="T001" and profile.json()["name"]=="Test User"
+ assert all(key in profile.json() for key in ["products_held","active_goals","recent_conversations","pending_requests","service_status"])
  assert client.get("/api/customer/profile",headers=admin_headers).status_code==403
+
+def test_customer_can_update_own_contact(client,customer_headers,admin_headers):
+ response=client.patch("/api/customer/profile/contact",headers=customer_headers,json={"phone_number":"9876543210","email_address":"customer@example.com"})
+ assert response.status_code==200 and response.json()["email_address"]=="customer@example.com"
+ assert client.patch("/api/customer/profile/contact",headers=admin_headers,json={"phone_number":"9876543210","email_address":"customer@example.com"}).status_code==403
+
+def test_customer_can_view_own_products(client,customer_headers,admin_headers):
+ from app.db.session import SessionLocal
+ from app.models import BankAccount,Customer
+ db=SessionLocal();customer=db.query(Customer).filter_by(customer_code="T001").one();db.add(BankAccount(customer_id=customer.id,account_number="123456789012",account_type="Savings Account",balance=1200,status="Active"));db.commit();db.close()
+ response=client.get("/api/customer/products",headers=customer_headers)
+ assert response.status_code==200 and response.json()[0]["masked_account_number"]=="•••• 9012"
+ assert client.get("/api/customer/products",headers=admin_headers).status_code==403
+
+def test_customer_service_request_description_is_saved_safely(client,customer_headers):
+ payload={"category":"Digital Banking","issue":"Unable to sign in","customer_description":"The app shows an error after I enter my user ID.","priority":"Medium"}
+ created=client.post("/api/service-requests",headers=customer_headers,json=payload)
+ assert created.status_code==200 and created.json()["customer_description"]==payload["customer_description"]
+ unsafe=client.post("/api/service-requests",headers=customer_headers,json={**payload,"customer_description":"My OTP is 123456"})
+ assert unsafe.status_code==400
 def test_information_query_does_not_become_complaint():
  a=provider.analyze("How can I block my debit card?"); assert a.intent=="Debit Card Information" and not a.complaint
 def test_non_working_card_phrase_becomes_complaint():

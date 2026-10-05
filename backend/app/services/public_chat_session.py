@@ -130,7 +130,8 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
     db.add(PublicMessage(conversation_id=conversation.id, role="user", content=message))
     db.flush()
 
-    text = provider.to_english(message.strip(),response_language)
+    raw_text = message.strip()
+    text = provider.to_english(raw_text,response_language)
     continuing_interest = detect_contextual_interest(db, conversation, text) if conversation.contact_step and INTEREST.search(text) and not re.search(r"@|\b\d{8,}\b", text) else None
     is_question = bool("?" in text or re.match(r"^(?:what|how|why|when|where|which|can you|could you|tell me|explain)\b", text, re.I))
     if conversation.contact_step and (text.lower().strip(".! ") in {"skip", "no", "cancel"} or DECLINE.search(text) or is_question):
@@ -154,8 +155,8 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
         conversation.pending_question = f"{text}\nProduct of interest: {continuing_interest}"
         label = {"name": "name", "phone": "phone number", "email": "email address"}[conversation.contact_step]
         result = {"message": f"Understood, you are interested in a {conversation.pending_product.lower()}. For an optional bank follow-up, please share your {label}, or type Skip to continue with general questions.", "grounded": False, "sources": []}
-    elif conversation.contact_step and EMAIL.fullmatch(text) and len(text) <= 120:
-        conversation.contact_email = text
+    elif conversation.contact_step and EMAIL.fullmatch(raw_text) and len(raw_text) <= 120:
+        conversation.contact_email = raw_text
         _upsert_lead(db, conversation)
         next_step = _next_contact_step(conversation, "email")
         if next_step:
@@ -163,8 +164,8 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
             result = {"message": "Thank you. " + _contact_prompt(next_step), "grounded": False, "sources": []}
         else:
             result = _finish_contact_capture(db, conversation, "Thank you. Your details have been saved for a bank representative to review. ")
-    elif conversation.contact_step and PHONE.fullmatch(text) and 10 <= len(re.sub(r"\D", "", text)) <= 15:
-        conversation.contact_phone = text
+    elif conversation.contact_step and PHONE.fullmatch(raw_text) and 10 <= len(re.sub(r"\D", "", raw_text)) <= 15:
+        conversation.contact_phone = raw_text
         _upsert_lead(db, conversation)
         next_step = _next_contact_step(conversation, "phone")
         if next_step:
@@ -173,10 +174,10 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
         else:
             result = _finish_contact_capture(db, conversation, "Thank you. Your details have been saved for a bank representative to review. ")
     elif conversation.contact_step == "name":
-        if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,98}", text):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,98}", raw_text):
             result = {"message": "Please enter your name, or type Skip to continue without sharing contact details.", "grounded": False, "sources": []}
         else:
-            conversation.contact_name = text
+            conversation.contact_name = raw_text
             next_step = _next_contact_step(conversation, "name")
             if next_step:
                 conversation.contact_step = next_step

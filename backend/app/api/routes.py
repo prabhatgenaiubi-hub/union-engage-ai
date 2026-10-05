@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
+import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -18,6 +20,7 @@ from app.services.recommendations import identify_opportunities
 from app.services.retention_engine import refresh_all_retention,refresh_customer_retention
 from app.services.email import send_transactional_email
 from app.services.public_chat_session import public_chat as public_chat_service
+from app.services.statement_pdf import build_statement_pdf
 
 router=APIRouter(prefix="/api")
 def serialize(obj):
@@ -26,8 +29,8 @@ def customer_engagement(db:Session,customer_id:int)->dict:
     conversation=db.query(Conversation).filter_by(customer_id=customer_id).order_by(Conversation.updated_at.desc()).first()
     if not conversation:return engagement_decision("Neutral","In Progress")
     latest=db.query(InteractionAnalysis).join(Message).filter(Message.conversation_id==conversation.id).order_by(Message.created_at.desc()).first()
-    open_request=db.query(ServiceRequest).filter(ServiceRequest.customer_id==customer_id,ServiceRequest.status.notin_(["Resolved","Closed"])).first()
-    return engagement_decision(latest.sentiment if latest else conversation.sentiment,conversation.resolution_status,latest.complaint if latest else False,bool(open_request))
+    open_request=db.query(ServiceRequest).filter(ServiceRequest.customer_id==customer_id,ServiceRequest.status.notin_(["Resolved","Closed"])).order_by(ServiceRequest.created_at.desc()).first()
+    return engagement_decision(latest.sentiment if latest else conversation.sentiment,conversation.resolution_status,latest.complaint if latest else False,bool(open_request),open_request.request_code if open_request else None)
 def customer_experience_scores(db:Session,customer_id:int,limit:int=10)->dict:
     conversations=db.query(Conversation).filter_by(customer_id=customer_id).order_by(Conversation.updated_at.desc(),Conversation.id.desc()).limit(limit).all()
     scores=[];defaulted=0
@@ -60,6 +63,36 @@ def public_chat_history(session_id:str,db:Session=Depends(get_db)):
     if not conversation:raise HTTPException(404,"Public chat session not found")
     return {"session_id":conversation.session_token,"messages":[{"role":item.role,"content":item.content,"sources":item.sources or []} for item in conversation.messages]}
 
+def public_lead_payload(lead:PublicLead|None)->dict|None:
+    return serialize(lead) if lead else None
+
+@router.get("/bank/public-conversations",tags=["Bank Intelligence"])
+def public_conversations(user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    """Employee-only list of login-page assistant sessions and their captured leads."""
+    leads={lead.conversation_id:lead for lead in db.query(PublicLead).all()}
+    rows=db.query(PublicConversation).order_by(PublicConversation.updated_at.desc(),PublicConversation.id.desc()).all()
+    return [{
+        "id":row.id,"title":row.title,"created_at":row.created_at,"updated_at":row.updated_at,
+        "message_count":len(row.messages),"lead":public_lead_payload(leads.get(row.id)),
+        "contact_step":row.contact_step,"pending_product":row.pending_product,
+    } for row in rows]
+
+@router.get("/bank/public-conversations/{conversation_id}",tags=["Bank Intelligence"])
+def public_conversation_detail(conversation_id:int,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    conversation=db.get(PublicConversation,conversation_id)
+    if not conversation:raise HTTPException(404,"Public chat session not found")
+    lead=db.query(PublicLead).filter_by(conversation_id=conversation.id).first()
+    return {
+        "id":conversation.id,"title":conversation.title,"created_at":conversation.created_at,
+        "pending_product":conversation.pending_product,"contact_step":conversation.contact_step,
+        "lead":public_lead_payload(lead),
+        "messages":[{"id":message.id,"role":message.role,"content":message.content,"created_at":message.created_at} for message in conversation.messages],
+    }
+
+@router.get("/bank/public-leads",tags=["Bank Intelligence"])
+def public_leads(user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    return [serialize(lead) for lead in db.query(PublicLead).order_by(PublicLead.created_at.desc(),PublicLead.id.desc()).all()]
+
 @router.post("/public/speech-to-text",tags=["Public Assistant"])
 async def public_speech_to_text(file:UploadFile=File(...),language_code:str=Form("auto")):
     data=await file.read(MAX_AUDIO_BYTES+1)
@@ -71,7 +104,45 @@ def customer_profile(user:User=Depends(current_user),db:Session=Depends(get_db))
     if user.user_type!="customer" or not user.customer_id:raise HTTPException(403,"Customer access required")
     customer=db.get(Customer,user.customer_id)
     if not customer:raise HTTPException(404,"Customer profile not found")
-    return {**serialize(customer),"display_name":user.display_name,"login_id":user.login_id}
+    products_held=db.query(BankAccount).filter_by(customer_id=customer.id,status="Active").count()
+    active_goals=db.query(FinancialGoal).filter(FinancialGoal.customer_id==customer.id,FinancialGoal.status.notin_(["Completed","Cancelled"])).count()
+    recent_conversations=db.query(Conversation).filter_by(customer_id=customer.id).count()
+    pending_requests=db.query(ServiceRequest).filter(ServiceRequest.customer_id==customer.id,ServiceRequest.status.notin_(["Resolved","Closed"])).count()
+    return {
+        **serialize(customer),"display_name":user.display_name,"login_id":user.login_id,
+        "products_held":products_held,"active_goals":active_goals,"recent_conversations":recent_conversations,
+        "pending_requests":pending_requests,"service_status":"Action needed" if pending_requests else "All clear",
+    }
+
+@router.get("/customer/products",tags=["Customer"])
+def customer_products(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    if user.user_type!="customer" or not user.customer_id:raise HTTPException(403,"Customer access required")
+    accounts=db.query(BankAccount).filter_by(customer_id=user.customer_id).order_by(BankAccount.created_at.desc(),BankAccount.id.desc()).all()
+    def masked(number:str)->str:
+        visible=number[-4:]
+        return f"•••• {visible}" if len(number)>4 else visible
+    return [{**serialize(account),"masked_account_number":masked(account.account_number)} for account in accounts]
+
+@router.patch("/customer/profile/contact",tags=["Customer"])
+def update_customer_contact(payload:CustomerContactUpdate,user:User=Depends(current_user),db:Session=Depends(get_db)):
+    if user.user_type!="customer" or not user.customer_id:raise HTTPException(403,"Customer access required")
+    customer=db.get(Customer,user.customer_id)
+    if not customer:raise HTTPException(404,"Customer profile not found")
+    customer.phone_number=payload.phone_number.strip()
+    customer.email_address=payload.email_address.strip().lower()
+    db.commit();db.refresh(customer)
+    return {"phone_number":customer.phone_number,"email_address":customer.email_address}
+
+@router.get("/customer/statement",tags=["Customer"])
+def customer_statement(user:User=Depends(current_user),db:Session=Depends(get_db)):
+    if user.user_type!="customer" or not user.customer_id:raise HTTPException(403,"Customer access required")
+    customer=db.get(Customer,user.customer_id)
+    if not customer:raise HTTPException(404,"Customer profile not found")
+    accounts=db.query(BankAccount).filter_by(customer_id=customer.id).order_by(BankAccount.id).all()
+    transactions={account.id:db.query(AccountTransaction).filter_by(account_id=account.id).order_by(AccountTransaction.transaction_date.desc()).limit(100).all() for account in accounts}
+    document=build_statement_pdf(customer,accounts,transactions)
+    filename=f"Union_Bank_statement_{customer.customer_code}.pdf"
+    return Response(document,media_type="application/pdf",headers={"Content-Disposition":f'attachment; filename="{filename}"'})
 
 @router.post("/chat",tags=["Customer AI"])
 def chat(payload:ChatRequest,user:User=Depends(current_user),db:Session=Depends(get_db)):
@@ -141,9 +212,12 @@ def conversation(conversation_id:int,user:User=Depends(current_user),db:Session=
 @router.post("/service-requests",tags=["Service Requests"])
 def create_request(payload:ServiceCreate,user:User=Depends(current_user),db:Session=Depends(get_db)):
     if user.user_type!="customer" or not user.customer_id: raise HTTPException(403)
+    description=payload.customer_description.strip()
+    if re.search(r"\b(?:pin|otp|cvv|password)\b.{0,12}\d{3,}|\b\d(?:[ -]?\d){11,18}\b",description,re.I):
+        raise HTTPException(400,"For your security, remove any PIN, OTP, CVV, password, or card number from the description.")
     decision=db.query(RoutingDecision).filter_by(conversation_id=payload.conversation_id).order_by(RoutingDecision.id.desc()).first() if payload.conversation_id else None
     priority="High" if decision and decision.recommended_queue!="Standard Queue" else payload.priority
-    count=db.query(ServiceRequest).count()+1; item=ServiceRequest(request_code=f"SR-{datetime.utcnow().year}-{count:06d}",customer_id=user.customer_id,conversation_id=payload.conversation_id,category=payload.category,issue=payload.issue,priority=priority,assigned_queue=decision.current_queue if decision else "Standard Queue",escalation_level="None",routing_reason=decision.reason if decision else "")
+    count=db.query(ServiceRequest).count()+1; item=ServiceRequest(request_code=f"SR-{datetime.utcnow().year}-{count:06d}",customer_id=user.customer_id,conversation_id=payload.conversation_id,category=payload.category,issue=payload.issue,customer_description=description,priority=priority,assigned_queue=decision.current_queue if decision else "Standard Queue",escalation_level="None",routing_reason=decision.reason if decision else "")
     db.add(item);db.flush()
     if decision:decision.service_request_id=item.id
     db.add(Notification(title=f"New {priority.lower()} priority service request requires review",severity="critical" if priority=="High" else "warning",customer_id=user.customer_id)); db.commit(); db.refresh(item); return serialize(item)
@@ -240,8 +314,8 @@ def customer360(customer_id:int,user:User=Depends(bank_user),db:Session=Depends(
     if risk: insights.append(f"{risk.level} attrition risk; prioritize service recovery" if risk.level in ["High","Critical"] else f"{risk.level} attrition risk")
     engagement=customer_engagement(db,c.id)
     recommended=[engagement["action"]]
-    if engagement["eligible"]:recommended+= ["Review next-best-product relevance with the customer","Keep all outbound communication subject to employee approval"]
-    else:recommended+= ["Do not present sales offers while service recovery is active","Reassess engagement only after a positive resolution signal"]
+    if engagement.get("warning"):recommended+= ["Prioritize service recovery before promotional outreach","Keep all outbound communication subject to employee approval"]
+    else:recommended+= ["Review next-best-product relevance with the customer","Keep all outbound communication subject to employee approval"]
     return {"customer":serialize(c),"conversations":[serialize(x) for x in conv],"service_requests":[serialize(x) for x in req],"leads":[serialize(x) for x in leads],"opportunities":[serialize(x) for x in opp],"retention":serialize(risk) if risk else None,"goals":[serialize(x) for x in goals],"ai_insights":insights,"engagement":engagement,"recommended_actions":recommended}
 @router.get("/leads",tags=["Bank Intelligence"])
 def leads(user:User=Depends(bank_user),db:Session=Depends(get_db)): return [serialize(x) for x in db.query(Lead).order_by(Lead.created_at.desc()).all()]
@@ -266,10 +340,15 @@ def opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
         formatted=format_customer_message(item.communication_draft,customer.name if customer else None)
         if item.communication_draft!=formatted:item.communication_draft=formatted
     db.commit()
-    return [{**serialize(item),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","customer_phone":customers[item.customer_id].phone_number if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in rows]
+    return [{**serialize(item),"customer_code":customers[item.customer_id].customer_code if item.customer_id in customers else str(item.customer_id),"customer_name":customers[item.customer_id].name if item.customer_id in customers else "Unknown customer","customer_email":customers[item.customer_id].email_address if item.customer_id in customers else "","customer_phone":customers[item.customer_id].phone_number if item.customer_id in customers else "","engagement":customer_engagement(db,item.customer_id)} for item in rows]
 @router.post("/opportunities/refresh",tags=["Bank Intelligence"])
 def refresh_opportunities(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     created=identify_opportunities(db);db.add(AuditLog(user_id=user.id,action="OPPORTUNITIES_REFRESHED",entity="opportunity",entity_id="batch",metadata_json={"created":len(created)}));db.commit();return {"created":len(created)}
+@router.get("/opportunities/{item_id}/engagement",tags=["Bank Intelligence"])
+def opportunity_engagement(item_id:int,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    item=db.get(Opportunity,item_id)
+    if not item: raise HTTPException(404,"Opportunity not found")
+    return {"opportunity_id":item.id,"customer_id":item.customer_id,"engagement":customer_engagement(db,item.customer_id),"checked_at":datetime.utcnow()}
 @router.patch("/opportunities/{item_id}",tags=["Bank Intelligence"])
 def update_opportunity(item_id:int,payload:OpportunityReview,user:User=Depends(bank_user),db:Session=Depends(get_db)):
     item=db.get(Opportunity,item_id)
@@ -364,10 +443,11 @@ def add_knowledge(payload:KnowledgeCreate,user:User=Depends(admin_user),db:Sessi
 def knowledge_documents(user:User=Depends(admin_user),db:Session=Depends(get_db)):
     return [{"id":item.id,"filename":item.filename,"title":item.title,"classification":item.classification,"audience":item.audience,"status":item.status,"page_count":item.page_count,"chunk_count":item.chunk_count,"error_message":item.error_message,"created_at":item.created_at} for item in db.query(KnowledgeDocument).order_by(KnowledgeDocument.created_at.desc()).all()]
 @router.post("/admin/knowledge/documents",tags=["Administration"])
-async def upload_knowledge_document(title:str=Form(""),customer_visible:bool=Form(False),file:UploadFile=File(...),user:User=Depends(admin_user),db:Session=Depends(get_db)):
+async def upload_knowledge_document(title:str=Form(""),audience:str=Form("employee"),file:UploadFile=File(...),user:User=Depends(admin_user),db:Session=Depends(get_db)):
     if file.content_type not in ["application/pdf","application/x-pdf"] or not file.filename.lower().endswith(".pdf"): raise HTTPException(400,"Only PDF documents are supported")
+    if audience not in ["employee","customer","engagement","coaching"]: raise HTTPException(400,"Invalid knowledge document audience")
     data=await file.read(MAX_PDF_BYTES+1)
-    try: document=ingest_pdf(db,data,file.filename,title,"customer" if customer_visible else "employee",user.id)
+    try: document=ingest_pdf(db,data,file.filename,title,audience,user.id)
     except ValueError as exc: raise HTTPException(400,str(exc))
     db.add(AuditLog(user_id=user.id,action="PDF_KNOWLEDGE_INGESTED",entity="knowledge_document",entity_id=str(document.id),metadata_json={"filename":document.filename,"pages":document.page_count,"chunks":document.chunk_count,"audience":document.audience}));db.commit()
     return {"id":document.id,"title":document.title,"status":document.status,"audience":document.audience,"page_count":document.page_count,"chunk_count":document.chunk_count}
@@ -375,9 +455,8 @@ async def upload_knowledge_document(title:str=Form(""),customer_visible:bool=For
 def update_knowledge_document(document_id:int,payload:ActionUpdate,user:User=Depends(admin_user),db:Session=Depends(get_db)):
     document=db.get(KnowledgeDocument,document_id)
     if not document:raise HTTPException(404,"Knowledge document not found")
-    if payload.status not in ["Approved","Internal","Inactive"]:raise HTTPException(400,"Status must be Approved, Internal, or Inactive")
+    if payload.status not in ["Approved","Pending Approval","Internal","Inactive"]:raise HTTPException(400,"Status must be Approved, Pending Approval, Internal, or Inactive")
     document.status=payload.status
-    if payload.status=="Approved":document.audience="customer"
     db.add(AuditLog(user_id=user.id,action="PDF_KNOWLEDGE_STATUS_CHANGED",entity="knowledge_document",entity_id=str(document.id),metadata_json={"status":payload.status,"audience":document.audience}));db.commit()
     return {"id":document.id,"status":document.status,"audience":document.audience}
 @router.delete("/admin/knowledge/documents/{document_id}",tags=["Administration"])
