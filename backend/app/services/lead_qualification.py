@@ -40,7 +40,8 @@ def _employment(text:str)->str|None:
     patterns=[
         ("Software Engineer",["software engineer","sofware engineer","software developer"]),("Engineer",["engineer"]),("Teacher",["teacher"]),
         ("Doctor",["doctor"]),("Government Employee",["government employee","government job"]),("Salaried",["salaried"]),
-        ("Self-employed",["self-employed","self employed","freelancer"]),("Business Owner",["business owner","own a business"]),("Retired",["retired"]),
+        ("Self-employed",["self-employed","self employed","freelancer"]),("Business Owner",["business owner","own a business","business person","businessman","business woman","entrepreneur"]),
+        ("Farmer",["farmer","agriculturist","agricultural worker","cultivator"]),("Retired",["retired"]),
     ]
     return next((label for label,terms in patterns if any(term in text for term in terms)),None)
 
@@ -57,6 +58,8 @@ def _question(product:str,field:str)->str|None:
 def qualify(lead:Lead,text:str,latest_text:str|None=None)->dict:
     """Update every fact found in accumulated conversation context on every turn."""
     data=dict(lead.qualification_data or {});t=" ".join(text.lower().split());latest=" ".join((latest_text or text).lower().split());normalized_latest=latest.rstrip(" .,!?")
+    skip_requested=normalized_latest in {"skip","skip details","skip qualification details","prefer not to say","rather not say","not comfortable sharing"}
+    if skip_requested:data["qualification_skipped"]=True
     required=_amount_near(t,[r"(?:loan|amount|need|require|want)"])
     income=_amount_near(t,[r"(?:monthly\s+)?(?:income|salary|earn(?:ing|s)?|in[ -]?hand)"])
     emi=_amount_near(t,[r"(?:existing\s+)?emi"])
@@ -74,9 +77,10 @@ def qualify(lead:Lead,text:str,latest_text:str|None=None)->dict:
     plain_amount=re.fullmatch(r"(?:₹|rs\.?\s*)?([0-9][0-9,]*(?:\.[0-9]+)?)\s*(lakh|lac|crore|k)?(?:\s+per\s+month)?",latest,re.I)
     if missing in ["required_amount","monthly_income","existing_emi"] and plain_amount:data[missing]=_amount_value(plain_amount.group(1),plain_amount.group(2))
     elif missing=="existing_emi" and normalized_latest in ["zero","none","no","0"]:data[missing]=0
+    elif missing=="employment_type" and re.fullmatch(r"[a-z][a-z .&/-]{1,60}",normalized_latest) and not re.match(r"(?:how|what|when|where|why|can|is|are|do|does|tell)\b",normalized_latest):data["employment_type"]=(latest_text or text).strip(" .,!?").title()
     elif missing=="location" and re.fullmatch(r"[a-z][a-z .-]{1,40}",latest):data[missing]=(latest_text or text).strip().title()
     elif missing=="timeline" and len(latest)>1:data[missing]=(latest_text or text).strip()[:80]
-    next_field=next((field for field in FIELDS if field not in data),None)
+    next_field=None if data.get("qualification_skipped") else next((field for field in FIELDS if field not in data),None)
     score=40;reasons=[f"Context indicates active {lead.product.lower()} interest"]
     weights={"required_amount":15,"monthly_income":15,"employment_type":10,"existing_emi":8,"location":5,"timeline":7}
     for field,weight in weights.items():
@@ -84,6 +88,6 @@ def qualify(lead:Lead,text:str,latest_text:str|None=None)->dict:
     lead.qualification_data=data;lead.score=min(score,100);lead.temperature="Hot" if lead.score>=80 else "Warm" if lead.score>=55 else "Cold"
     lead.journey_stage="Qualified" if not next_field else STAGES[next_field]
     lead.status="Qualified" if not next_field else "In Qualification";lead.drop_off_detected=False
-    lead.next_action="Relationship Manager callback" if not next_field else f"Collect {next_field.replace('_',' ')}"
+    lead.next_action="Relationship Manager callback — details optional" if not next_field else f"Collect {next_field.replace('_',' ')}"
     lead.reasons=reasons
     return {"complete":not next_field,"next_field":next_field,"next_question":_question(lead.product,next_field) if next_field else None,"collected":data,"score":lead.score,"temperature":lead.temperature,"stage":lead.journey_stage,"reasons":reasons}

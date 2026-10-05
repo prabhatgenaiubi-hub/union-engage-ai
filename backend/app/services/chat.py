@@ -167,7 +167,7 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
         qualification=qualify(lead," ".join(customer_context),text)
     guidance=None
     if qualification:
-        guidance=(f"Acknowledge the information just provided, then ask exactly one concise qualification question: {qualification['next_question']}" if not qualification["complete"] else f"Confirm that qualification is complete and explain that a relationship manager can review the {lead.product.lower()} requirement and follow up. Do not promise approval.")
+        guidance=(f"Acknowledge the information just provided, then ask exactly one concise qualification question: {qualification['next_question']}. Mention that the customer can type Skip to continue without providing more details." if not qualification["complete"] else f"Acknowledge that the customer chose to share only partial details, and explain that a relationship manager can review the {lead.product.lower()} requirement and follow up. Do not promise approval.")
     goal=db.query(FinancialGoal).filter_by(conversation_id=conv.id).first()
     coaching=None
     if is_coaching:

@@ -189,6 +189,28 @@ def test_personal_loan_accepts_zero_with_punctuation_and_filters_other_loan_know
  assert reply["lead"]["collected"]["existing_emi"]==0
  assert reply["lead"]["next_question"]=="Which city are you based in?"
  assert [item["title"] for item in reply["knowledge_sources"]]==["Personal loan guide"]
+def test_customer_can_skip_remaining_loan_qualification_details(client,customer_headers):
+ first=client.post("/api/chat",headers=customer_headers,json={"message":"I need a personal loan of 5 lakhs"}).json()
+ reply=client.post("/api/chat",headers=customer_headers,json={"conversation_id":first["conversation_id"],"message":"Skip qualification details"}).json()
+ assert reply["lead"]["status"]=="Qualified"
+ assert reply["lead"]["collected"]["qualification_skipped"] is True
+ assert reply["lead"]["next_question"] is None
+def test_employment_recognizes_farmer_and_business_person():
+ from app.services.lead_qualification import _employment
+ assert _employment("I am a farmer")=="Farmer"
+ assert _employment("I am a business person")=="Business Owner"
+def test_qualification_accepts_unlisted_employment_description():
+ from app.models import Lead
+ from app.services.lead_qualification import qualify
+ lead=Lead(product="Home Loan",qualification_data={"required_amount":500000,"monthly_income":60000})
+ result=qualify(lead,"","Independent tailor")
+ assert result["collected"]["employment_type"]=="Independent Tailor"
+def test_admin_can_select_chat_reply_model_only(client,admin_headers):
+ initial=client.get("/api/admin/ai-settings",headers=admin_headers).json()
+ assert {item["id"] for item in initial["options"]}=={"huggingface","sarvam","ollama"}
+ changed=client.patch("/api/admin/ai-settings/chat-reply-model",headers=admin_headers,json={"provider":"sarvam"}).json()
+ assert changed["selected_provider"]=="sarvam" and changed["scope"]=="Chat replies only"
+ client.patch("/api/admin/ai-settings/chat-reply-model",headers=admin_headers,json={"provider":"huggingface"})
 def test_customer_chat_greeting_skips_rag(client,customer_headers,monkeypatch):
  from app.services import chat as chat_service
  monkeypatch.setattr(chat_service.provider,"to_english",lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError("Translation should not run")))

@@ -198,8 +198,10 @@ class MockAIProvider:
 class OllamaAIProvider(MockAIProvider):
     """Uses local Ollama for response wording while deterministic rules retain control of banking actions."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None, response_tokens: int = 220) -> None:
         self.fallback = MockAIProvider()
+        self.model = model or settings.ollama_model
+        self.response_tokens = response_tokens
 
     def to_english(self, text: str, language_code: str = "auto") -> str:
         """Normalize any supported input language to English before analysis."""
@@ -228,10 +230,10 @@ Assistant response:"""
             result = httpx.post(
                 f"{settings.ollama_base_url.rstrip('/')}/api/generate",
                 json={
-                    "model": settings.ollama_model,
+                    "model": self.model,
                     "prompt": prompt,
                     "stream": False,
-                    "options": {"temperature": 0.2, "num_predict": 220},
+                    "options": {"temperature": 0.2, "num_predict": self.response_tokens},
                 },
                 timeout=settings.ollama_timeout_seconds,
             )
@@ -323,6 +325,8 @@ class SarvamAIProvider(MockAIProvider):
         return not bounds or any(bounds[0]<=character<=bounds[1] for character in text)
 
     def response(self,text:str,a:Analysis,knowledge:str|None,history:list[dict]|None=None,language_code:str="auto",offer_service_request:bool=False,response_guidance:str|None=None)->str:
+        if settings.chat_reply_provider.lower()=="ollama":
+            return OllamaAIProvider(settings.local_chat_model,settings.local_chat_max_tokens).response(text,a,knowledge,history,language_code,offer_service_request,response_guidance)
         if not settings.sarvam_api_key:
             logger.warning("SARVAM_API_KEY is not configured; using deterministic response")
             return self.fallback.response(text,a,knowledge,history,language_code,offer_service_request,response_guidance)
@@ -344,9 +348,10 @@ Approved bank knowledge:\n{approved_context}"""}]
             messages[0]["content"] += f"\nRequired response behavior: {response_guidance} Translate the question into the selected response language."
         messages.extend({"role":item["role"],"content":item["content"]} for item in (history or [])[-6:])
         messages.append({"role":"user","content":text})
-        hf_answer=_huggingface_chat_response(messages)
-        if hf_answer:
-            return hf_answer if self._uses_target_script(hf_answer,language_code) else self._translate_response(hf_answer,language_code)
+        if settings.chat_reply_provider.lower()=="huggingface":
+            hf_answer=_huggingface_chat_response(messages)
+            if hf_answer:
+                return hf_answer if self._uses_target_script(hf_answer,language_code) else self._translate_response(hf_answer,language_code)
         try:
             result=httpx.post(
                 f"{settings.sarvam_base_url.rstrip('/')}/v1/chat/completions",

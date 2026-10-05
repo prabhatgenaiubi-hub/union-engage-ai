@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     sarvam_chat_model: str = "sarvam-105b-conversations"
     sarvam_speech_model: str = "saaras:v3"
     sarvam_timeout_seconds: int = 90
+    chat_reply_provider: str = "sarvam"
+    local_chat_model: str = "gpt-oss:20b"
+    local_chat_max_tokens: int = 550
     hf_chat_token: str = ""
     hf_chat_base_url: str = "https://router.huggingface.co/v1"
     hf_chat_model: str = "openai/gpt-oss-120b:cerebras"

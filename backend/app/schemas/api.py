@@ -20,6 +20,7 @@ class ServiceRequestMessageCreate(BaseModel): message:str=Field(min_length=1,max
 class FeedbackCreate(BaseModel): conversation_id:int; csat:int|None=Field(None,ge=1,le=5); nps:int|None=Field(None,ge=0,le=10)
 class KnowledgeCreate(BaseModel): title:str; category:str; keywords:str; content:str; active:bool=True
 class ActionUpdate(BaseModel): status:str
+class ChatReplyModelUpdate(BaseModel): provider:Literal["huggingface","sarvam","ollama"]
 class OpportunityReview(BaseModel): status:Literal["Pending Review","Approved","Dismissed"]; communication_draft:str=Field(max_length=2000)
 class OpportunityEmailSend(BaseModel):
     recipient:str=Field(min_length=5,max_length=120,pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")

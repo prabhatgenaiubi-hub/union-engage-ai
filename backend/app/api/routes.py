@@ -473,8 +473,24 @@ def users(user:User=Depends(admin_user),db:Session=Depends(get_db)): return [{k:
 def audits(user:User=Depends(admin_user),db:Session=Depends(get_db)): return [serialize(x) for x in db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(200)]
 @router.get("/admin/routing-rules",tags=["Administration"])
 def routing_rules(user:User=Depends(admin_user)): return [{"condition":"Highly Negative + Repeat Contact","route":"Priority Service Queue"},{"condition":"Highly Negative + Financial Dispute","route":"Supervisor Review"},{"condition":"High Urgency","route":"Priority Service Queue"},{"condition":"Neutral Routine Query","route":"Standard Queue"}]
+CHAT_REPLY_MODELS={
+    "huggingface":{"label":"GPT-OSS 120B (Hugging Face)","model":settings.hf_chat_model,"provider":"Hugging Face"},
+    "sarvam":{"label":"Sarvam 105B","model":settings.sarvam_chat_model,"provider":"Sarvam"},
+    "ollama":{"label":"GPT-OSS 20B (Local)","model":settings.local_chat_model,"provider":"Local Ollama"},
+}
+def active_chat_reply_provider(db:Session)->str:
+    saved=db.get(AppSetting,"chat_reply_provider")
+    return saved.value if saved and saved.value in CHAT_REPLY_MODELS else settings.chat_reply_provider.lower()
 @router.get("/admin/ai-settings",tags=["Administration"])
-def ai_settings(user:User=Depends(admin_user)):
-    model=settings.sarvam_chat_model if settings.ai_provider=="sarvam" else settings.ollama_model if settings.ai_provider=="ollama" else "Deterministic Rules v1"
-    endpoint=settings.sarvam_base_url if settings.ai_provider=="sarvam" else settings.ollama_base_url if settings.ai_provider=="ollama" else None
-    return {"provider":settings.ai_provider,"model":model,"status":"Configured","temperature":0.2 if settings.ai_provider in ["ollama","sarvam"] else 0,"endpoint":endpoint,"secrets":"Server-side only"}
+def ai_settings(user:User=Depends(admin_user),db:Session=Depends(get_db)):
+    selected=active_chat_reply_provider(db)
+    return {"selected_provider":selected,"active":CHAT_REPLY_MODELS[selected],"options":[{"id":key,**value} for key,value in CHAT_REPLY_MODELS.items()],"scope":"Chat replies only","status":"Configured"}
+@router.patch("/admin/ai-settings/chat-reply-model",tags=["Administration"])
+def update_chat_reply_model(payload:ChatReplyModelUpdate,user:User=Depends(admin_user),db:Session=Depends(get_db)):
+    setting=db.get(AppSetting,"chat_reply_provider")
+    if setting:setting.value=payload.provider
+    else:db.add(AppSetting(key="chat_reply_provider",value=payload.provider))
+    settings.chat_reply_provider=payload.provider
+    db.add(AuditLog(user_id=user.id,action="CHAT_REPLY_MODEL_CHANGED",entity="app_settings",entity_id="chat_reply_provider",metadata_json={"provider":payload.provider,"model":CHAT_REPLY_MODELS[payload.provider]["model"]}))
+    db.commit()
+    return {"selected_provider":payload.provider,"active":CHAT_REPLY_MODELS[payload.provider],"scope":"Chat replies only","status":"Configured"}

@@ -7,7 +7,7 @@ import {logout} from "@/lib/api";
 import {NotificationMenu} from "./notification-menu";
 
 const primary=[["/bank/dashboard","Dashboard",LayoutDashboard],["/bank/customers","Customer 360",Users],["/bank/conversations","Conversations",MessagesSquare],["/bank/leads","Leads",Target],["/bank/opportunities","Sales Opportunities",Lightbulb],["/bank/retention","Retention",ShieldAlert],["/bank/service-intelligence","Service Intelligence",Route],["/bank/service-requests","Service Requests",ClipboardList],["/bank/public-conversations","External Chats",MessagesSquare],["/bank/public-leads","External Leads",Target]] as const;
-const admin=[["/bank/admin/knowledge","Knowledge Base / Upload PDF",FileUp]] as const;
+const admin=[["/bank/admin/ai-settings","AI Configuration",Lightbulb],["/bank/admin/knowledge","Knowledge Base / Upload PDF",FileUp]] as const;
 
 export function BankShell({children}:{children:React.ReactNode}){
  const path=usePathname(),[open,setOpen]=useState(false),[role,setRole]=useState<string|null>(null),[name,setName]=useState("Bank User");

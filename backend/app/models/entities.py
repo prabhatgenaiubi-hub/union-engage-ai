@@ -18,6 +18,11 @@ class User(Base, TimestampMixin):
     display_name: Mapped[str]=mapped_column(String(100))
     customer_id: Mapped[int|None]=mapped_column(ForeignKey("customers.id"), nullable=True)
 
+class AppSetting(Base, TimestampMixin):
+    __tablename__="app_settings"
+    key: Mapped[str]=mapped_column(String(80), primary_key=True)
+    value: Mapped[str]=mapped_column(String(120), nullable=False)
+
 class Customer(Base, TimestampMixin):
     __tablename__="customers"
     id: Mapped[int]=mapped_column(primary_key=True)
