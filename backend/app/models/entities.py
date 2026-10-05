@@ -127,7 +127,7 @@ class ServiceRequest(Base, TimestampMixin):
     id: Mapped[int]=mapped_column(primary_key=True); request_code: Mapped[str]=mapped_column(String(30), unique=True)
     customer_id: Mapped[int]=mapped_column(ForeignKey("customers.id"), index=True)
     conversation_id: Mapped[int|None]=mapped_column(ForeignKey("conversations.id"), nullable=True)
-    category: Mapped[str]=mapped_column(String(60)); issue: Mapped[str]=mapped_column(String(200)); priority: Mapped[str]=mapped_column(String(20)); status: Mapped[str]=mapped_column(String(30), default="Open")
+    category: Mapped[str]=mapped_column(String(60)); issue: Mapped[str]=mapped_column(String(200)); customer_description: Mapped[str]=mapped_column(Text,default=""); priority: Mapped[str]=mapped_column(String(20)); status: Mapped[str]=mapped_column(String(30), default="Open")
     assigned_queue: Mapped[str]=mapped_column(String(50),default="Standard Queue")
     escalation_level: Mapped[str]=mapped_column(String(30),default="None")
     routing_reason: Mapped[str]=mapped_column(Text,default="")
@@ -235,7 +235,7 @@ class KnowledgeChunk(Base):
     page_number: Mapped[int]=mapped_column(Integer,index=True)
     chunk_index: Mapped[int]=mapped_column(Integer)
     content: Mapped[str]=mapped_column(Text)
-    embedding: Mapped[list[float]]=mapped_column(Vector(768).with_variant(JSON,"sqlite"))
+    embedding: Mapped[list[float]]=mapped_column(Vector(1024).with_variant(JSON,"sqlite"))
 
 class AuditLog(Base):
     __tablename__="audit_logs"

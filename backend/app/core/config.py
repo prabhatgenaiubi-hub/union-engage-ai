@@ -12,10 +12,15 @@ class Settings(BaseSettings):
     sarvam_chat_model: str = "sarvam-105b-conversations"
     sarvam_speech_model: str = "saaras:v3"
     sarvam_timeout_seconds: int = 90
+    hf_chat_token: str = ""
+    hf_chat_base_url: str = "https://router.huggingface.co/v1"
+    hf_chat_model: str = "openai/gpt-oss-120b:cerebras"
+    hf_chat_max_tokens: int = 550
+    hf_chat_timeout_seconds: int = 90
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3:latest"
     ollama_timeout_seconds: int = 90
-    ollama_embedding_model: str = "nomic-embed-text:latest"
+    ollama_embedding_model: str = "bge-m3"
     ollama_embedding_timeout_seconds: int = 180
     local_sentiment_model: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
     local_sentiment_enabled: bool = True

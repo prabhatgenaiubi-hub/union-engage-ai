@@ -3,7 +3,7 @@ import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {ArrowDownUp,CalendarDays,CheckCircle2,ChevronRight,Clock3,Grid2X2,Headphones,Search,Send,TicketCheck,X} from "lucide-react";
 import {api} from "@/lib/api";
-type RequestRow={id:number;request_code:string;category:string;issue:string;priority:string;status:string;assigned_queue?:string;created_at:string;updated_at?:string};
+type RequestRow={id:number;request_code:string;category:string;issue:string;customer_description?:string;priority:string;status:string;assigned_queue?:string;created_at:string;updated_at?:string};
 type RequestMessage={id:number;message:string;sender_name:string;sender_type:"customer"|"employee";created_at:string};
 const formatDate=(value:string)=>new Intl.DateTimeFormat("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date(value));
 const normalizedStatus=(status:string)=>status==="Closed"?"Resolved":status;
@@ -26,7 +26,7 @@ export function CustomerServiceRequests(){
    <header><div><p>{selected.request_code}</p><h2>{selected.category}</h2><span><b>{selected.status}</b> · {selected.priority} priority</span></div><button onClick={()=>setSelected(null)} aria-label="Close drawer"><X/></button></header>
    <div className="request-detail-meta"><span><Clock3/>Created {formatDate(selected.created_at)}</span>{selected.assigned_queue&&<span>Handling team: {selected.assigned_queue}</span>}</div>
    {activeStatuses.includes(selected.status)&&<div className="border-b border-slate-200 bg-white px-6 py-3"><button className="btn-secondary w-full border-red-200 text-red-700 hover:bg-red-50" disabled={closing} onClick={closeRequest}><CheckCircle2 size={16}/>{closing?"Closing request…":"Close this service request"}</button></div>}
-   <div className="request-thread"><div className="request-original"><small>Original request</small><p>{selected.issue}</p></div>{messages.map(item=><div key={item.id} className={item.sender_type==="customer"?"request-customer-message":"request-bank-message"}><p>{item.message}</p><small>{item.sender_name} · {formatDate(item.created_at)}</small></div>)}{!messages.length&&<p className="request-no-messages">No follow-up messages yet.</p>}</div>
+   <div className="request-thread"><div className="request-original"><small>Original request</small><p>{selected.issue}</p>{selected.customer_description&&<><small className="mt-3 block">Details you provided</small><p>{selected.customer_description}</p></>}</div>{messages.map(item=><div key={item.id} className={item.sender_type==="customer"?"request-customer-message":"request-bank-message"}><p>{item.message}</p><small>{item.sender_name} · {formatDate(item.created_at)}</small></div>)}{!messages.length&&<p className="request-no-messages">No follow-up messages yet.</p>}</div>
    {activeStatuses.includes(selected.status)?<footer><textarea maxLength={2000} placeholder="Reply securely to the bank…" value={message} onChange={e=>setMessage(e.target.value)}/><button disabled={sending||!message.trim()} onClick={reply} aria-label="Send reply"><Send/></button>{error&&<p>{error}</p>}</footer>:<div className="border-t border-emerald-200 bg-emerald-50 p-4 text-center text-xs font-semibold text-emerald-800">This request is closed. Its conversation remains available for your records.{error&&<span className="mt-1 block text-red-600">{error}</span>}</div>}
   </section></div>}
  </div>

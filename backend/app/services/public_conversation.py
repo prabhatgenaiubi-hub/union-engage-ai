@@ -5,7 +5,7 @@ import re
 def social_reply(message: str) -> str | None:
     text = " ".join(re.findall(r"[a-z]+", message.lower()))
     responses = (
-        (r"(?:hi+|hello+|hey+|good morning|good afternoon|good evening|namaste|namaskar)", "Hello! I can help with general questions about Union Bank accounts, cards, loans, deposits and banking services. What would you like to know?"),
+        (r"(?:hi+|hello+|hey+|good morning|good afternoon|good evening|namaste|namaskar)", "Hello! I can help with Union Bank accounts, cards, loans, deposits and banking services. What would you like to know?"),
         (r"(?:hi+|hello+|hey+) how (?:are you|is it going|have you been)", "Hello! I'm here and ready to help. What banking question can I answer for you?"),
         (r"(?:(?:ok|okay|alright|great|sure|got it|understood|well|yes) )*(?:thanks(?: a lot)?|thank you(?: so much| very much)?|many thanks|thanks a ton)(?: for (?:your help|the help|helping|the information|the info))?(?: (?:again|bye))?", "You're welcome! Glad I could help. Feel free to ask if anything else comes up."),
         (r"(?:ok|okay|alright|sure|great|perfect|fine|cool|awesome|got it|understood|sounds good|that makes sense|all right)(?: (?:great|perfect|thanks|thank you))?", "Sounds good! I'm here whenever you need more help."),
