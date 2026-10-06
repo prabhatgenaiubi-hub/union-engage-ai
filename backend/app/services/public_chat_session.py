@@ -10,7 +10,7 @@ from app.services.public_lead_context import contextual_product
 from app.services.public_conversation import social_reply
 from app.services.public_lead_details import extract_lead_details
 from app.services.intelligence import provider
-from app.services.chat import detected_language
+from app.services.chat import detected_language, is_follow_up_selection, localize_follow_up
 
 PRODUCTS = {
     "Home Loan": ("home loan", "buy a house", "buying a house", "buy a home", "buying a home"),
@@ -27,6 +27,13 @@ PHONE = re.compile(r"^\+?[0-9][0-9\s-]{8,17}$")
 EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 CALLBACK = re.compile(r"\b(?:call me|contact me|request (?:a )?call\s?back|(?:want|need|like) (?:a )?call\s?back)\b", re.I)
 DECLINE = re.compile(r"\b(?:not interested|do not|don't|dont|no longer|not now|no thanks|no thank you|rather not|prefer not)\b", re.I)
+
+PUBLIC_INFORMATIONAL_FOLLOW_UPS = (
+    (("home loan", "buy a house", "buying a home"), "What would you like to explore next?", ["Home loan eligibility", "Required documents", "Application process"]),
+    (("cheque book", "chequebook", "check book", "checkbook"), "Would you like the steps to request a cheque book?", ["Show me the steps"]),
+    (("debit card", "atm card"), "Would you like help with card controls or card usage?", ["Show me card controls", "Explain card usage"]),
+    (("minimum balance", "average monthly balance"), "Would you like help checking which account requirements apply?", ["Explain account requirements"]),
+)
 
 def requests_callback(message: str) -> bool:
     return bool(CALLBACK.search(message) and not DECLINE.search(message))
@@ -54,13 +61,32 @@ def detect_contextual_interest(db: Session, conversation: PublicConversation, me
                if item.content not in contact_values and not re.search(r"@|\b\+?\d[\d\s-]{8,}\b", item.content)]
     return contextual_product(message, history, list(PRODUCTS) + ["Banking enquiry"]) or detect_product_interest(message)
 
-def _reply(conversation: PublicConversation, message: str, grounded: bool = False, sources: list | None = None) -> dict:
-    return {"message": message, "grounded": grounded, "sources": sources or [], "session_id": conversation.session_token, "contact_step": conversation.contact_step}
+def _reply(conversation: PublicConversation, message: str, grounded: bool = False, sources: list | None = None, follow_up: dict | None = None, language_code: str = "en-IN") -> dict:
+    return {"message": message, "grounded": grounded, "sources": sources or [], "session_id": conversation.session_token, "contact_step": conversation.contact_step, "follow_up": follow_up, "language_code":language_code}
+
+def _follow_up(message: str, conversation: PublicConversation, result: dict) -> dict | None:
+    """Offer one relevant next step while leaving greetings and closed flows alone."""
+    if result.get("follow_up"):
+        return result["follow_up"]
+    if conversation.contact_step:
+        question={
+            "name":"What name should the bank representative use?",
+            "phone":"What phone number can the bank use to contact you?",
+            "email":"What email address can the bank use to contact you?",
+        }[conversation.contact_step]
+        return {"question":question,"suggestions":["Skip"]}
+    normalized=" ".join(message.lower().split())
+    if social_reply(message) or DECLINE.search(normalized) or normalized in {"skip","no","cancel"} or is_follow_up_selection(normalized):
+        return None
+    for phrases,question,suggestions in PUBLIC_INFORMATIONAL_FOLLOW_UPS:
+        if any(phrase in normalized for phrase in phrases):
+            return {"question":question,"suggestions":suggestions}
+    return None
 
 def _answer(db: Session, conversation: PublicConversation, question: str) -> dict:
     product = detect_product_interest(question)
     if product:
-        return {"message": f"I can help with general {product.lower()} information. Would you like to know about eligibility, documents, or the application process?", "grounded": False, "sources": []}
+        return {"message": f"I can help with general {product.lower()} information. Would you like to know about eligibility, documents, or the application process?", "grounded": False, "sources": [], "follow_up":{"question":"What would you like to explore next?","suggestions":["Eligibility","Required documents","Application process"]}}
     rows = db.query(PublicMessage).filter_by(conversation_id=conversation.id).order_by(PublicMessage.id.desc()).limit(10).all()
     contact_values = {conversation.contact_name, conversation.contact_phone, conversation.contact_email}
     history = [type("Turn", (), {"role": item.role, "content": item.content}) for item in reversed(rows[1:]) if item.content not in contact_values]
@@ -120,7 +146,7 @@ def _finish_contact_capture(db: Session, conversation: PublicConversation, prefi
     result["message"] = prefix + result["message"]
     return result
 
-def public_chat(db: Session, message: str, session_id: str | None = None, language_code: str = "auto") -> dict:
+def public_chat(db: Session, message: str, session_id: str | None = None, language_code: str = "auto", follow_up_action: str | None = None) -> dict:
     response_language=detected_language(message) if language_code=="auto" else language_code
     conversation = db.query(PublicConversation).filter_by(session_token=session_id).first() if session_id else None
     if conversation is None:
@@ -131,7 +157,8 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
     db.flush()
 
     raw_text = message.strip()
-    text = provider.to_english(raw_text,response_language)
+    text = follow_up_action or provider.to_english(raw_text,response_language)
+    selected_follow_up = is_follow_up_selection(text) or is_follow_up_selection(raw_text)
     continuing_interest = detect_contextual_interest(db, conversation, text) if conversation.contact_step and INTEREST.search(text) and not re.search(r"@|\b\d{8,}\b", text) else None
     is_question = bool("?" in text or re.match(r"^(?:what|how|why|when|where|which|can you|could you|tell me|explain)\b", text, re.I))
     if conversation.contact_step and (text.lower().strip(".! ") in {"skip", "no", "cancel"} or DECLINE.search(text) or is_question):
@@ -190,7 +217,7 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
         result = {"message": "Please enter a valid email address, or type Skip to save the details already shared.", "grounded": False, "sources": []}
     else:
         existing_lead = db.query(PublicLead).filter_by(conversation_id=conversation.id).first()
-        interest = detect_contextual_interest(db, conversation, message) if existing_lead is None and (not conversation.contact_declined or requests_callback(message)) else None
+        interest = detect_contextual_interest(db, conversation, message) if not selected_follow_up and existing_lead is None and (not conversation.contact_declined or requests_callback(message)) else None
         if interest:
             conversation.pending_product = interest
             conversation.pending_question = f"{message}\nProduct of interest: {interest}"
@@ -203,4 +230,4 @@ def public_chat(db: Session, message: str, session_id: str | None = None, langua
     result["message"]=provider.from_english(result["message"],response_language)
     db.add(PublicMessage(conversation_id=conversation.id, role="assistant", content=result["message"], sources=result["sources"]))
     db.commit()
-    return _reply(conversation, result["message"], result["grounded"], result["sources"])
+    return _reply(conversation, result["message"], result["grounded"], result["sources"], localize_follow_up(_follow_up(text, conversation, result),response_language),response_language)

@@ -18,6 +18,41 @@ def test_public_login_assistant_greeting_does_not_retrieve_documents(client,monk
   assert response.status_code==200
   assert "What would you like to know?" in response.json()["message"]
   assert response.json()["grounded"] is False
+  assert response.json()["follow_up"] is None
+def test_public_login_assistant_offers_contextual_follow_up(client):
+ response=client.post("/api/public/chat",json={"message":"What documents are needed for a home loan?"})
+ assert response.status_code==200
+ assert response.json()["follow_up"]=={"question":"What would you like to explore next?","suggestions":["Home loan eligibility","Required documents","Application process"]}
+def test_hindi_checkbook_question_offers_localized_follow_up(client,monkeypatch):
+ from app.services import public_chat_session as service
+ monkeypatch.setattr(service.provider,"to_english",lambda *_:"How do I request a checkbook?")
+ response=client.post("/api/public/chat",json={"message":"मैं चेक बुक के लिए कैसे अनुरोध करूँ?"}).json()
+ assert response["follow_up"]["question"]=="क्या आप चेक बुक के अनुरोध के चरण जानना चाहेंगे?"
+ assert response["follow_up"]["suggestions"]==["मुझे चरण दिखाएँ"]
+def test_neutral_information_answer_removes_unnecessary_apology():
+ from app.services.response_style import strip_unnecessary_apology
+ answer="I’m sorry you’re having trouble getting a cheque book. Here’s how you can request one through mobile banking."
+ assert strip_unnecessary_apology(answer)=="Here’s how you can request one through mobile banking."
+def test_public_contact_capture_offers_skip_action(client):
+ response=client.post("/api/public/chat",json={"message":"I want a home loan"})
+ assert response.json()["contact_step"]=="name"
+ assert response.json()["follow_up"]=={"question":"What name should the bank representative use?","suggestions":["Skip"]}
+def test_follow_up_is_localized_in_hindi():
+ from app.services.chat import localize_follow_up
+ follow_up=localize_follow_up({"question":"Would you like help with card controls or card usage?","suggestions":["Show me card controls","Explain card usage"]},"hi-IN")
+ assert follow_up=={"question":"क्या आप कार्ड कंट्रोल या कार्ड के उपयोग के बारे में जानना चाहेंगे?","suggestions":["मुझे कार्ड कंट्रोल दिखाएँ","कार्ड का उपयोग समझाएँ"],"suggestion_values":["Show me card controls","Explain card usage"]}
+def test_follow_up_uses_translation_provider_for_every_supported_language(monkeypatch):
+ from app.services import chat as service
+ monkeypatch.setattr(service.provider,"from_english",lambda text,code:f"{code}:{text}")
+ service._translated_follow_up_text.cache_clear()
+ for code in ("bn-IN","gu-IN","kn-IN","ml-IN","mr-IN","od-IN","pa-IN","ta-IN","te-IN"):
+  follow_up=service.localize_follow_up({"question":"Question?","suggestions":["Action"]},code)
+  assert follow_up=={"question":f"{code}:Question?","suggestions":[f"{code}:Action"],"suggestion_values":["Action"]}
+def test_public_selected_follow_up_is_not_repeated(client):
+ first=client.post("/api/public/chat",json={"message":"How can I control my debit card?"}).json()
+ assert first["follow_up"] is not None
+ second=client.post("/api/public/chat",json={"message":"Show me card controls","session_id":first["session_id"]}).json()
+ assert second["follow_up"] is None
 def test_public_login_assistant_combined_greeting(client,monkeypatch):
  from app.services import public_assistant_agent as agent_module
  def unexpected(*args,**kwargs):raise AssertionError("Greeting should not search knowledge")
@@ -256,6 +291,16 @@ def test_routine_query_stays_in_standard_queue(client,customer_headers):
  assert chat["routing"]["queue"]=="Standard Queue" and chat["routing"]["escalation"]=="None"
 def test_chat_processing(client,customer_headers):
  r=client.post("/api/chat",headers=customer_headers,json={"message":"Mera debit card kal se kaam nahi kar raha hai."}); body=r.json(); assert r.status_code==200 and body["service_request_suggested"]; assert body["service_request_draft"]=={"category":"Debit Card","issue":"Mera debit card kal se kaam nahi kar raha hai.","priority":"Medium"}
+ assert body["follow_up"]=={"question":"Would you like me to raise this service request?","suggestions":[]}
+def test_informational_chat_offers_contextual_follow_up(client,customer_headers):
+ body=client.post("/api/chat",headers=customer_headers,json={"message":"How do I request a cheque book?"}).json()
+ assert body["follow_up"]=={"question":"Would you like the steps to request a cheque book?","suggestions":["Show me the steps"]}
+def test_greeting_and_resolved_chat_do_not_force_follow_up(client,customer_headers):
+ greeting=client.post("/api/chat",headers=customer_headers,json={"message":"Hello"}).json()
+ assert greeting["follow_up"] is None
+ issue=client.post("/api/chat",headers=customer_headers,json={"message":"My Internet banking is not working."}).json()
+ resolved=client.post("/api/chat",headers=customer_headers,json={"conversation_id":issue["conversation_id"],"message":"It is working now, thank you."}).json()
+ assert resolved["follow_up"] is None
 def test_digital_banking_failure_preemptively_offers_service_request(client,customer_headers):
  first=client.post("/api/chat",headers=customer_headers,json={"message":"My Internet banking is not working."}).json()
  assert first["service_request_suggested"] is True
@@ -412,7 +457,17 @@ def test_chat_auto_language_uses_message_script():
  from app.services.intelligence import provider
  assert detected_language("Create an emergency fund")=="en-IN"
  assert detected_language("आपातकालीन निधि बनाएं")=="hi-IN"
+ assert detected_language("मी चेकबुकसाठी विनंती कशी करू?")=="mr-IN"
  assert provider.analyze("Plan to buy a home").intent=="Financial Coaching"
+
+def test_unrelated_information_question_pauses_active_loan_qualification(client,customer_headers):
+ first=client.post("/api/chat",headers=customer_headers,json={"message":"I want a home loan."}).json()
+ assert first["lead"] is not None
+ cheque=client.post("/api/chat",headers=customer_headers,json={"conversation_id":first["conversation_id"],"message":"How do I request a checkbook?"}).json()
+ assert cheque["analysis"]["intent"]=="Cheque Book Information"
+ assert cheque["lead"] is None
+ assert "home-loan" not in cheque["message"].lower()
+ assert cheque["follow_up"] is not None
 
 def test_customer_voice_transcription_preserves_requested_language(client,customer_headers,monkeypatch):
  captured={}

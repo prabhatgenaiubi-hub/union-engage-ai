@@ -1,6 +1,7 @@
 import json
 from dataclasses import replace
 from datetime import datetime
+from functools import lru_cache
 from sqlalchemy.orm import Session
 from app.models import *
 from app.services.intelligence import provider, routing_intelligence
@@ -13,7 +14,10 @@ from app.services.recommendations import identify_chat_opportunity
 from app.services.public_conversation import social_reply
 
 SCRIPT_LANGUAGES=[("\u0900","\u097f","hi-IN"),("\u0980","\u09ff","bn-IN"),("\u0a80","\u0aff","gu-IN"),("\u0c80","\u0cff","kn-IN"),("\u0d00","\u0d7f","ml-IN"),("\u0b00","\u0b7f","od-IN"),("\u0a00","\u0a7f","pa-IN"),("\u0b80","\u0bff","ta-IN"),("\u0c00","\u0c7f","te-IN")]
+MARATHI_MARKERS={"मी","मला","माझा","माझी","माझे","आहे","आहेत","कशी","कसा","कसे","करू","साठी","मध्ये","आणि","नाही","हवे","पाहिजे","विनंती"}
 def detected_language(text:str)->str:
+    words={word.strip(".,!?।:;()[]{}\"'") for word in text.split()}
+    if any("\u0900"<=character<="\u097f" for character in text) and words&MARATHI_MARKERS:return "mr-IN"
     for start,end,code in SCRIPT_LANGUAGES:
         if any(start<=character<=end for character in text): return code
     return "en-IN"
@@ -22,6 +26,56 @@ SERVICE_REQUEST_PHRASES=("raise a service request","raise service request","crea
 CONTEXT_FOLLOW_UP_PHRASES=("still not working","still doesn't work","still does not work","same issue","same problem","not resolved","unresolved","issue continues","problem continues","tried that","did that","this issue","this problem","for this","for it")
 RESOLUTION_PHRASES=("working now","works now","issue is resolved","issue resolved","problem is resolved","problem resolved","fixed now","has been fixed","thank you it worked","thanks it worked")
 
+INFORMATIONAL_FOLLOW_UPS={
+    "Debit Card Information":{"question":"Would you like help with card controls or card usage?","suggestions":["Show me card controls","Explain card usage"]},
+    "Cheque Book Information":{"question":"Would you like the steps to request a cheque book?","suggestions":["Show me the steps"]},
+    "Minimum Balance Information":{"question":"Would you like help checking which account requirements apply?","suggestions":["Explain account requirements"]},
+    "Home Loan Information":{"question":"What would you like to explore next?","suggestions":["Home loan eligibility","Required documents","Application process"]},
+}
+FOLLOW_UP_SELECTIONS={suggestion.lower() for item in INFORMATIONAL_FOLLOW_UPS.values() for suggestion in item["suggestions"]}|{"skip qualification details","skip"}
+HINDI_FOLLOW_UP_TEXT={
+    "Would you like help with card controls or card usage?":"क्या आप कार्ड कंट्रोल या कार्ड के उपयोग के बारे में जानना चाहेंगे?",
+    "Show me card controls":"मुझे कार्ड कंट्रोल दिखाएँ",
+    "Explain card usage":"कार्ड का उपयोग समझाएँ",
+    "Would you like the steps to request a cheque book?":"क्या आप चेक बुक के अनुरोध के चरण जानना चाहेंगे?",
+    "Show me the steps":"मुझे चरण दिखाएँ",
+    "Would you like help checking which account requirements apply?":"क्या आप लागू खाता आवश्यकताओं को समझना चाहेंगे?",
+    "Explain account requirements":"खाता आवश्यकताएँ समझाएँ",
+    "What would you like to explore next?":"आप आगे क्या जानना चाहेंगे?",
+    "Home loan eligibility":"होम लोन की पात्रता",
+    "Required documents":"आवश्यक दस्तावेज़",
+    "Application process":"आवेदन प्रक्रिया",
+    "Would you like me to raise this service request?":"क्या आप चाहेंगे कि मैं यह सर्विस रिक्वेस्ट दर्ज करूँ?",
+    "Skip qualification details":"योग्यता विवरण छोड़ें",
+    "What name should the bank representative use?":"बैंक प्रतिनिधि आपको किस नाम से संबोधित करे?",
+    "What phone number can the bank use to contact you?":"बैंक आपसे संपर्क करने के लिए किस फ़ोन नंबर का उपयोग कर सकता है?",
+    "What email address can the bank use to contact you?":"बैंक आपसे संपर्क करने के लिए किस ईमेल पते का उपयोग कर सकता है?",
+    "Skip":"छोड़ें",
+    "Eligibility":"पात्रता",
+}
+
+def is_follow_up_selection(text:str)->bool:
+    normalized=" ".join(text.lower().split()).strip(".?!")
+    localized={value.lower() for value in HINDI_FOLLOW_UP_TEXT.values()}
+    if normalized in FOLLOW_UP_SELECTIONS or normalized in localized:return True
+    return any(pattern in normalized for pattern in ("show me the card controls","show card controls","explain the card usage","होम लोन की पात्रता","आवश्यक दस्तावेज़","आवेदन प्रक्रिया"))
+
+@lru_cache(maxsize=256)
+def _translated_follow_up_text(text:str,language_code:str)->str:
+    if language_code=="hi-IN" and text in HINDI_FOLLOW_UP_TEXT:return HINDI_FOLLOW_UP_TEXT[text]
+    return provider.from_english(text,language_code)
+
+def localize_follow_up(follow_up:dict|None,language_code:str)->dict|None:
+    if not follow_up:return None
+    canonical=list(follow_up["suggestions"])
+    if language_code in ("auto","en-IN"):
+        return follow_up
+    return {
+        "question":_translated_follow_up_text(follow_up["question"],language_code),
+        "suggestions":[_translated_follow_up_text(item,language_code) for item in canonical],
+        "suggestion_values":canonical,
+    }
+
 def explicit_service_request(text:str)->bool:
     normalized=" ".join(text.lower().split())
     return any(phrase in normalized for phrase in SERVICE_REQUEST_PHRASES)
@@ -29,6 +83,17 @@ def explicit_service_request(text:str)->bool:
 def contextual_follow_up(text:str)->bool:
     normalized=" ".join(text.lower().split())
     return any(phrase in normalized for phrase in CONTEXT_FOLLOW_UP_PHRASES)
+
+def build_follow_up(text:str,a,qualification:dict|None=None,coaching:dict|None=None,service_draft:dict|None=None)->dict|None:
+    """Return one useful next step without forcing every answer to end in a question."""
+    normalized=" ".join(text.lower().split())
+    if any(phrase in normalized for phrase in RESOLUTION_PHRASES) or is_follow_up_selection(normalized):return None
+    if service_draft:return {"question":"Would you like me to raise this service request?","suggestions":[]}
+    if qualification and not qualification["complete"] and qualification.get("next_question"):
+        return {"question":qualification["next_question"],"suggestions":["Skip qualification details"]}
+    if coaching and coaching.get("next_question"):
+        return {"question":coaching["next_question"],"suggestions":[]}
+    return INFORMATIONAL_FOLLOW_UPS.get(a.intent)
 
 def contextual_sentiment(current,text:str,prior_analyses:list[InteractionAnalysis]):
     normalized=" ".join(text.lower().split())
@@ -111,7 +176,7 @@ def product_relevant_matches(matches:list, product:str|None)->list:
         return f"{item.title} {item.category} {item.content}".lower()
     return [item for item in matches if any(term in searchable_text(item) for term in terms)]
 
-def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None=None,language_code:str="auto",mode:str="banking")->dict:
+def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None=None,language_code:str="auto",mode:str="banking",follow_up_action:str|None=None)->dict:
     response_language=detected_language(text) if language_code=="auto" else language_code
     conv=db.get(Conversation,conversation_id) if conversation_id else None
     if not conv or conv.customer_id!=customer_id:
@@ -122,7 +187,7 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
         db.add(Message(conversation_id=conv.id,role="assistant",content=quick_reply))
         conv.primary_intent="Banking Query";conv.sentiment="Neutral";conv.resolution_status="Answered";conv.updated_at=datetime.utcnow();conv.summary="Customer exchanged a greeting with the banking assistant."
         db.commit();db.refresh(conv)
-        return {"conversation_id":conv.id,"message":quick_reply,"language_code":response_language,"analysis":{"intent":"Banking Query","sentiment":"Neutral","score":0,"emotion":"Neutral","urgency":"Low","complaint":False,"repeat_contact":False},"knowledge_sources":[],"grounded":False,"service_request_suggested":False,"service_request_draft":None,"lead":None,"goal":None,"opportunity":None,"routing":None}
+        return {"conversation_id":conv.id,"message":quick_reply,"language_code":response_language,"analysis":{"intent":"Banking Query","sentiment":"Neutral","score":0,"emotion":"Neutral","urgency":"Low","complaint":False,"repeat_contact":False},"knowledge_sources":[],"grounded":False,"service_request_suggested":False,"service_request_draft":None,"follow_up":None,"lead":None,"goal":None,"opportunity":None,"routing":None}
     previous=db.query(Message).filter_by(conversation_id=conv.id).order_by(Message.created_at.desc()).limit(6).all()
     history=[{"role":item.role,"content":item.content} for item in reversed(previous)]
     session_analysis_rows=db.query(InteractionAnalysis,Message).join(Message,InteractionAnalysis.message_id==Message.id).filter(Message.conversation_id==conv.id).order_by(Message.created_at.desc()).all()
@@ -130,7 +195,7 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
     prior_issue=next(((analysis,message) for analysis,message in complaint_rows if not explicit_service_request(message.content) and not contextual_follow_up(message.content) and provider.analyze(provider.to_english(message.content,detected_language(message.content))).complaint),complaint_rows[-1] if complaint_rows else None)
     contextual_query=" ".join([item["content"] for item in history[-4:] if item["role"]=="user"]+[text])
     analysis_query=provider.to_english(contextual_query,response_language)
-    current_analysis_query=provider.to_english(text,response_language)
+    current_analysis_query=follow_up_action or provider.to_english(text,response_language)
     msg=Message(conversation_id=conv.id,role="user",content=text); db.add(msg); db.flush()
     prior_analyses=[analysis for analysis,_ in session_analysis_rows]
     goal=db.query(FinancialGoal).filter_by(conversation_id=conv.id).first()
@@ -142,8 +207,9 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
     conv.primary_intent=a.intent; conv.sentiment=a.sentiment; conv.resolution_status="Unresolved" if a.complaint else "Answered"; conv.updated_at=datetime.utcnow(); conv.summary=f"Customer contacted the bank regarding {a.intent.lower()}. Current sentiment is {a.sentiment.lower()}. The interaction is {'at risk and requires service recovery' if a.sentiment=='Highly Negative' else 'awaiting confirmation that the customer is satisfied'}."
     interaction=InteractionAnalysis(message_id=msg.id,intent=a.intent,sentiment=a.sentiment,score=a.score,emotion=a.emotion,urgency=a.urgency,complaint=a.complaint,repeat_contact=a.repeat,entities=a.entities);db.add(interaction);db.flush()
     customer_context=[item[1].content for item in reversed(session_analysis_rows)]+[text]
-    lead_signal=None if is_coaching else detect_lead_context(customer_context)
-    existing_lead=db.query(Lead).filter_by(conversation_id=conv.id).order_by(Lead.updated_at.desc()).first() if not is_coaching else None
+    unrelated_informational=current_signal.intent in {"Debit Card Information","Cheque Book Information","Minimum Balance Information"}
+    lead_signal=None if is_coaching or unrelated_informational else detect_lead_context(customer_context)
+    existing_lead=db.query(Lead).filter_by(conversation_id=conv.id).order_by(Lead.updated_at.desc()).first() if not is_coaching and not unrelated_informational else None
     active_product=lead_signal["product"] if lead_signal else (existing_lead.product if existing_lead else None)
     small_talk_reply=social_reply(text) if not is_coaching else None
     pdf_matches=[] if small_talk_reply else retrieve_pdf_chunks(db,current_analysis_query,audience="coaching") if is_coaching else retrieve_pdf_chunks(db,analysis_query)
@@ -188,4 +254,5 @@ def process_message(db:Session,customer_id:int,text:str,conversation_id:int|None
     if risk.level in ["High","Critical"]: db.add(Notification(title=f"{risk.level} attrition risk detected",severity="critical",customer_id=customer_id))
     db.commit(); db.refresh(conv)
     sources=[{"id":item["id"],"title":item["title"],"category":item["category"],"page":item["page"],"source_type":"pdf"} for item in pdf_matches]+[{"id":item.article_id,"title":item.title,"category":item.category,"page":None,"source_type":"article"} for item in matches]
-    return {"conversation_id":conv.id,"message":response,"language_code":response_language,"analysis":{"intent":a.intent,"sentiment":a.sentiment,"score":a.score,"emotion":a.emotion,"urgency":a.urgency,"complaint":a.complaint,"repeat_contact":a.repeat},"knowledge_sources":sources,"grounded":bool(sources),"service_request_suggested":service_suggested,"service_request_draft":service_draft,"lead":{"id":lead.id,"score":lead.score,"temperature":lead.temperature,"stage":lead.journey_stage,"status":lead.status,"next_question":qualification["next_question"] if qualification else None,"collected":lead.qualification_data,"reasons":lead.reasons} if lead else None,"goal":{"id":goal.id,"name":goal.name,"status":goal.status,"monthly_income":goal.monthly_income,"monthly_expenses":goal.monthly_expenses,"target_amount":goal.target_amount,"timeline_months":goal.timeline_months,"monthly_required":goal.monthly_required,"plan":goal.coaching_plan,"next_question":coaching["next_question"] if coaching else None} if goal else None,"opportunity":{"id":opportunity.id,"product":opportunity.product,"score":opportunity.score,"status":opportunity.status} if opportunity else None,"routing":routing}
+    follow_up=localize_follow_up(build_follow_up(current_analysis_query,a,qualification,coaching,service_draft),response_language)
+    return {"conversation_id":conv.id,"message":response,"language_code":response_language,"analysis":{"intent":a.intent,"sentiment":a.sentiment,"score":a.score,"emotion":a.emotion,"urgency":a.urgency,"complaint":a.complaint,"repeat_contact":a.repeat},"knowledge_sources":sources,"grounded":bool(sources),"service_request_suggested":service_suggested,"service_request_draft":service_draft,"follow_up":follow_up,"lead":{"id":lead.id,"score":lead.score,"temperature":lead.temperature,"stage":lead.journey_stage,"status":lead.status,"next_question":qualification["next_question"] if qualification else None,"collected":lead.qualification_data,"reasons":lead.reasons} if lead else None,"goal":{"id":goal.id,"name":goal.name,"status":goal.status,"monthly_income":goal.monthly_income,"monthly_expenses":goal.monthly_expenses,"target_amount":goal.target_amount,"timeline_months":goal.timeline_months,"monthly_required":goal.monthly_required,"plan":goal.coaching_plan,"next_question":coaching["next_question"] if coaching else None} if goal else None,"opportunity":{"id":opportunity.id,"product":opportunity.product,"score":opportunity.score,"status":opportunity.status} if opportunity else None,"routing":routing}

@@ -4,6 +4,7 @@ import logging
 import httpx
 from app.core.config import settings
 from app.services.public_prompt import PUBLIC_SYSTEM, conversation_context
+from app.services.response_style import strip_unnecessary_apology
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def supports_question_focus(question: str, passage: str) -> bool:
 def generated_answer(question: str, passage: str, history: list | None = None) -> str | None:
     """Use a local model only after an approved passage has been selected."""
     cleaned = re.sub(r"(?im)^\s*(?:classification:.*|page\s+\d+\s+of\s+\d+|.*central office.*)\s*$", "", passage).strip()
-    prompt = "You are the public Union Bank login-page assistant. Answer the current question directly in plain language using only the approved excerpt below. Summarize the actual answer in complete sentences, under 110 words. Never repeat the question or its opening phrase. Never use ellipses. Do not copy document headers, classification markings, or long passages. If the excerpt does not answer the question, reply exactly INSUFFICIENT. Do not invent rates, timeframes, eligibility, or account details. Never ask for PIN, OTP, CVV, password, or full card number.\nApproved excerpt:\n" + cleaned[:4500] + "\nCurrent question: " + question + "\nConcise answer:"
+    prompt = "You are the public Union Bank login-page assistant. Answer the current question directly in plain language using only the approved excerpt below. Summarize the actual answer in complete sentences, under 110 words. For a neutral informational question, do not apologize or imply that the visitor is having trouble. Never repeat the question or its opening phrase. Never use ellipses. Do not copy document headers, classification markings, or long passages. If the excerpt does not answer the question, reply exactly INSUFFICIENT. Do not invent rates, timeframes, eligibility, or account details. Never ask for PIN, OTP, CVV, password, or full card number.\nApproved excerpt:\n" + cleaned[:4500] + "\nCurrent question: " + question + "\nConcise answer:"
     prompt = "Recent conversation (context only, not policy evidence):\n" + json.dumps(conversation_context(history), ensure_ascii=False) + "\nIf the visitor asks for a simpler explanation, explain the relevant point in everyday language rather than repeating the previous wording.\n" + prompt
     try:
         response = httpx.post(f"{settings.ollama_base_url.rstrip('/')}/api/generate", json={"model": settings.ollama_model, "system": PUBLIC_SYSTEM, "prompt": prompt, "stream": False, "options": {"temperature": 0, "num_predict": 220}}, timeout=min(settings.ollama_timeout_seconds, 45))
@@ -69,7 +70,7 @@ def generated_answer(question: str, passage: str, history: list | None = None) -
         answer = response.json()["response"].strip()
         if not answer or "INSUFFICIENT" in answer.upper() or len(answer) > 900 or "..." in answer or "…" in answer:
             return None
-        return answer
+        return strip_unnecessary_apology(answer)
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
         logger.warning("Public assistant generation unavailable: %s", exc)
         return None

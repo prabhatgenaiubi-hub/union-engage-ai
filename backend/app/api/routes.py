@@ -55,7 +55,7 @@ def me(user:User=Depends(current_user)): return {"id":user.id,"name":user.displa
 
 @router.post("/public/chat",tags=["Public Assistant"])
 def public_chat_endpoint(payload:PublicChatRequest,db:Session=Depends(get_db)):
-    return public_chat_service(db,payload.message,payload.session_id,payload.language_code)
+    return public_chat_service(db,payload.message,payload.session_id,payload.language_code,payload.follow_up_action)
 
 @router.get("/public/chat/{session_id}",tags=["Public Assistant"])
 def public_chat_history(session_id:str,db:Session=Depends(get_db)):
@@ -147,7 +147,7 @@ def customer_statement(user:User=Depends(current_user),db:Session=Depends(get_db
 @router.post("/chat",tags=["Customer AI"])
 def chat(payload:ChatRequest,user:User=Depends(current_user),db:Session=Depends(get_db)):
     if user.user_type!="customer" or not user.customer_id: raise HTTPException(403,"Customer access required")
-    return process_message(db,user.customer_id,payload.message,payload.conversation_id,payload.language_code)
+    return process_message(db,user.customer_id,payload.message,payload.conversation_id,payload.language_code,payload.mode,payload.follow_up_action)
 @router.post("/speech-to-text",tags=["Customer AI"])
 async def speech_to_text(file:UploadFile=File(...),language_code:str=Form("auto"),user:User=Depends(current_user)):
     if user.user_type!="customer":raise HTTPException(403,"Customer access required")
