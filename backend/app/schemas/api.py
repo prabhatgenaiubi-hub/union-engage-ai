@@ -21,11 +21,21 @@ class FeedbackCreate(BaseModel): conversation_id:int; csat:int|None=Field(None,g
 class KnowledgeCreate(BaseModel): title:str; category:str; keywords:str; content:str; active:bool=True
 class ActionUpdate(BaseModel): status:str
 class ChatReplyModelUpdate(BaseModel): provider:Literal["huggingface","sarvam","ollama"]
+class ImageGenerationUpdate(BaseModel): enabled:bool
+class CampaignImageGenerate(BaseModel):
+    prompt:str=Field(min_length=10,max_length=1000)
+    campaign_type:Literal["opportunity","retention"]
 class OpportunityReview(BaseModel): status:Literal["Pending Review","Approved","Dismissed"]; communication_draft:str=Field(max_length=2000)
 class OpportunityEmailSend(BaseModel):
     recipient:str=Field(min_length=5,max_length=120,pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     subject:str=Field(min_length=1,max_length=200)
     message:str=Field(min_length=1,max_length=5000)
+    image_base64:str|None=Field(default=None,max_length=8_000_000)
+    image_filename:str|None=Field(default=None,max_length=120)
+    image_position:Literal["top","after_greeting","bottom","custom"]="top"
+    image_width_percent:int=Field(default=100,ge=25,le=100)
+    image_height_px:int=Field(default=300,ge=100,le=600)
+    image_alignment:Literal["left","center","right"]="center"
 class RetentionReview(BaseModel): status:Literal["Monitoring","Intervention Planned","Content Approved","Closed"]; communication_draft:str=Field(max_length=2000)
 class RoutingAction(BaseModel):
     status:Literal["Applied","Dismissed"]="Applied"

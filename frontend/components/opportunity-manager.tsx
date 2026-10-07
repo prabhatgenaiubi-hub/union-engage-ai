@@ -3,12 +3,20 @@
 import {useEffect, useMemo, useState} from "react";
 import {CalendarDays, Mail, Phone, RefreshCw, Search, Sparkles, X} from "lucide-react";
 import {api} from "@/lib/api";
+import {CampaignImageComposer} from "@/components/campaign-image-composer";
 
 type EmailDraft = {
   item: any;
   recipient: string;
   subject: string;
   message: string;
+  imagePrompt:string;
+  imageBase64?:string;
+  imageFilename?:string;
+  imagePosition:"top"|"after_greeting"|"bottom"|"custom";
+  imageWidthPercent:number;
+  imageHeightPx:number;
+  imageAlignment:"left"|"center"|"right";
 };
 
 export function OpportunityManager(){
@@ -51,19 +59,19 @@ export function OpportunityManager(){
 
   function openEmailEditor(item:any){
     setError("");
-    setEmailDraft({item,recipient:item.customer_email||"",subject:`${item.product} options from Union Bank`,message:item.communication_draft||""});
+    setEmailDraft({item,recipient:item.customer_email||"",subject:`${item.product} options from Union Bank`,message:item.communication_draft||"",imagePrompt:`Professional banking email hero image for ${item.product}, relevant to ${item.reason}, contemporary Indian setting, warm and aspirational, subject on the left, clean space on the right, no text or logos`,imagePosition:"top",imageWidthPercent:100,imageHeightPx:300,imageAlignment:"center"});
   }
 
   async function sendEmail(){
     if(!emailDraft)return;
-    const {item,recipient,subject,message}=emailDraft;
+    const {item,recipient,subject,message,imageBase64,imageFilename,imagePosition,imageWidthPercent,imageHeightPx,imageAlignment}=emailDraft;
     setSaving(item.id);
     setError("");
     try{
-      const result=await api<any>(`/opportunities/${item.id}/send-email`,{method:"POST",body:JSON.stringify({recipient:recipient.trim(),subject:subject.trim(),message:message.trim()})});
+      const result=await api<any>(`/opportunities/${item.id}/send-email`,{method:"POST",body:JSON.stringify({recipient:recipient.trim(),subject:subject.trim(),message:message.trim(),image_base64:imageBase64||null,image_filename:imageFilename||null,image_position:imagePosition,image_width_percent:imageWidthPercent,image_height_px:imageHeightPx,image_alignment:imageAlignment})});
       setItems(rows=>rows.map(row=>row.id===item.id?{...row,status:result.status}:row));
       setEmailDraft(null);
-      alert(`Email submitted to the provider for ${result.recipient}. Final delivery depends on the provider and recipient mailbox.`);
+      alert(`Email submitted to the provider for ${result.recipient}${result.image_generated?" with a generated campaign image":" as text only"}. Final delivery depends on the provider and recipient mailbox.`);
     }catch(e:any){setError(e.message)}finally{setSaving(undefined)}
   }
 
@@ -94,15 +102,16 @@ function OpportunityCard({item,saving,refreshing,setItems,review,refreshEngageme
 function EmailEditor({draft,setDraft,saving,error,onSend}:{draft:EmailDraft;setDraft:React.Dispatch<React.SetStateAction<EmailDraft|null>>;saving:boolean;error:string;onSend:()=>void}){
   const canSend=!!draft.recipient.trim()&&!!draft.subject.trim()&&!!draft.message.trim();
   const update=(values:Partial<EmailDraft>)=>setDraft(current=>current?{...current,...values}:current);
-  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-labelledby="email-editor-title" onMouseDown={e=>{if(e.target===e.currentTarget&&!saving)setDraft(null)}}>
-    <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
-      <header className="flex items-start justify-between border-b border-slate-200 px-6 py-5"><div><h2 id="email-editor-title" className="text-xl font-bold text-navy">Review and edit email</h2><p className="mt-1 text-sm text-slate-500">Confirm the recipient and edit the subject or message before sending.</p></div><button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close email editor" disabled={saving} onClick={()=>setDraft(null)}><X size={20}/></button></header>
+  return <div className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-labelledby="email-editor-title" onMouseDown={e=>{if(e.target===e.currentTarget&&!saving)setDraft(null)}}>
+    <div className="my-6 w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
+      <header className="flex items-start justify-between border-b border-slate-200 px-6 py-5"><div><h2 id="email-editor-title" className="text-xl font-bold text-navy">Review and edit email</h2><p className="mt-1 text-sm text-slate-500">Confirm the recipient, message, and optional image before sending.</p></div><button className="rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Close email editor" disabled={saving} onClick={()=>setDraft(null)}><X size={20}/></button></header>
       <div className="space-y-4 px-6 py-5">
         {error&&<p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <label className="block text-sm font-semibold text-slate-700">To<input type="email" className="input mt-2" maxLength={120} value={draft.recipient} onChange={e=>update({recipient:e.target.value})}/></label>
         <label className="block text-sm font-semibold text-slate-700">Subject<input className="input mt-2" maxLength={200} value={draft.subject} onChange={e=>update({subject:e.target.value})}/></label>
         <label className="block text-sm font-semibold text-slate-700">Message<textarea className="input mt-2 min-h-56 leading-6" maxLength={5000} value={draft.message} onChange={e=>update({message:e.target.value})}/></label>
         <p className="text-right text-xs text-slate-400">{draft.message.length}/5000 characters</p>
+        <CampaignImageComposer campaignType="opportunity" prompt={draft.imagePrompt} imageBase64={draft.imageBase64} imageFilename={draft.imageFilename} imagePosition={draft.imagePosition} imageWidthPercent={draft.imageWidthPercent} imageHeightPx={draft.imageHeightPx} imageAlignment={draft.imageAlignment} message={draft.message} onChange={values=>update(values)}/>
       </div>
       <footer className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4"><button className="btn-secondary" disabled={saving} onClick={()=>setDraft(null)}>Cancel</button><button className="btn-primary" disabled={saving||!canSend} onClick={onSend}><Mail size={16}/>{saving?"Sending…":"Send email"}</button></footer>
     </div>

@@ -51,6 +51,9 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      COMFYUI_BASE_URL: http://host.docker.internal:8188
+      COMFYUI_CHECKPOINT: flux1-schnell-fp8.safetensors
+      COMFYUI_TIMEOUT_SECONDS: 120
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports: ["8000:8000"]

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     smtp_username: str = ""
     smtp_password: str = ""
     brevo_timeout_seconds: int = 20
+    comfyui_base_url: str = "http://127.0.0.1:8188"
+    comfyui_checkpoint: str = "flux1-schnell-fp8.safetensors"
+    comfyui_timeout_seconds: int = 120
     cors_origins: str = "http://localhost:3000"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 settings = Settings()

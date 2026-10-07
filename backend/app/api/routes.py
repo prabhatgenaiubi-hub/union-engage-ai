@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import base64
+import binascii
 import re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
@@ -19,6 +21,7 @@ from app.services.engagement import engagement_decision
 from app.services.recommendations import identify_opportunities
 from app.services.retention_engine import refresh_all_retention,refresh_customer_retention
 from app.services.email import send_transactional_email
+from app.services.image_generation import campaign_prompt,generate_campaign_image
 from app.services.public_chat_session import public_chat as public_chat_service
 from app.services.statement_pdf import build_statement_pdf
 
@@ -40,6 +43,27 @@ def customer_experience_scores(db:Session,customer_id:int,limit:int=10)->dict:
         else:scores.append(3);defaulted+=1
     csat=sum(scores)/len(scores) if scores else 3
     return {"csat":round(csat,1),"nps":round(((csat-3)/2)*100),"sessions":len(scores),"defaulted_sessions":defaulted}
+def image_generation_enabled(db:Session)->bool:
+    setting=db.get(AppSetting,"email_image_generation_enabled")
+    return bool(setting and setting.value.lower()=="true")
+def email_image(payload:OpportunityEmailSend,db:Session):
+    if not payload.image_base64:return None,None
+    if not image_generation_enabled(db):raise HTTPException(409,"Campaign image generation is disabled by administration")
+    try:content=base64.b64decode(payload.image_base64,validate=True)
+    except (ValueError,binascii.Error):raise HTTPException(422,"Invalid campaign image")
+    if not content.startswith(b"\x89PNG\r\n\x1a\n"):raise HTTPException(422,"Campaign image must be a PNG")
+    if len(content)>5_000_000:raise HTTPException(413,"Campaign image is too large")
+    return content,payload.image_filename or "campaign.png"
+@router.get("/campaign-images/settings",tags=["Bank Intelligence"])
+def campaign_image_settings(user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    return {"enabled":image_generation_enabled(db),"provider":"Local ComfyUI","model":settings.comfyui_checkpoint}
+@router.post("/campaign-images/generate",tags=["Bank Intelligence"])
+def generate_email_campaign_image(payload:CampaignImageGenerate,user:User=Depends(bank_user),db:Session=Depends(get_db)):
+    if not image_generation_enabled(db):raise HTTPException(409,"Campaign image generation is disabled by administration")
+    prompt=campaign_prompt(payload.campaign_type,"bank customer","campaign visual",payload.prompt)
+    try:generated=generate_campaign_image(prompt)
+    except RuntimeError as exc:raise HTTPException(502,str(exc))
+    return {"image_base64":base64.b64encode(generated.content).decode("ascii"),"filename":generated.filename,"content_type":"image/png","prompt":payload.prompt}
 def login(payload:LoginRequest,user_type:str,db:Session):
     user=db.query(User).filter_by(login_id=payload.login_id,user_type=user_type).first()
     if not user or not verify_password(payload.password,user.password_hash): raise HTTPException(401,"Invalid credentials")
@@ -367,11 +391,12 @@ def email_opportunity(item_id:int,payload:OpportunityEmailSend,user:User=Depends
     customer=db.get(Customer,item.customer_id)
     if not customer or not customer.email_address:raise HTTPException(409,"Customer email address is unavailable")
     message=format_customer_message(payload.message,customer.name)
-    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message)
+    image_content,image_filename=email_image(payload,db)
+    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message,image_content,image_filename or "campaign.png",payload.image_position,payload.image_width_percent,payload.image_height_px,payload.image_alignment)
     except RuntimeError as exc:raise HTTPException(502,str(exc))
     item.status="Email Sent"
-    db.add(AuditLog(user_id=user.id,action="OPPORTUNITY_EMAIL_SENT",entity="opportunity",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id}));db.commit()
-    return {"status":item.status,"recipient":payload.recipient,"subject":payload.subject,"message_id":message_id}
+    db.add(AuditLog(user_id=user.id,action="OPPORTUNITY_EMAIL_SENT",entity="opportunity",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id,"image_generated":bool(image_content)}));db.commit()
+    return {"status":item.status,"recipient":payload.recipient,"subject":payload.subject,"message_id":message_id,"image_generated":bool(image_content)}
 
 @router.get("/retention",tags=["Bank Intelligence"])
 def retention_list(user:User=Depends(bank_user),db:Session=Depends(get_db)):
@@ -409,10 +434,11 @@ def email_retention_case(item_id:int,payload:OpportunityEmailSend,user:User=Depe
     customer=db.get(Customer,item.customer_id)
     if not customer:raise HTTPException(404,"Customer not found")
     message=format_customer_message(payload.message,customer.name)
-    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message)
+    image_content,image_filename=email_image(payload,db)
+    try:message_id=send_transactional_email(payload.recipient,customer.name,payload.subject,message,image_content,image_filename or "campaign.png",payload.image_position,payload.image_width_percent,payload.image_height_px,payload.image_alignment)
     except RuntimeError as exc:raise HTTPException(502,str(exc))
-    db.add(AuditLog(user_id=user.id,action="RETENTION_EMAIL_SENT",entity="retention",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id}));db.commit()
-    return {"status":item.status,"recipient":payload.recipient,"message_id":message_id}
+    db.add(AuditLog(user_id=user.id,action="RETENTION_EMAIL_SENT",entity="retention",entity_id=str(item.id),metadata_json={"customer_id":customer.id,"recipient":payload.recipient,"provider":"transactional_email","message_id":message_id,"image_generated":bool(image_content)}));db.commit()
+    return {"status":item.status,"recipient":payload.recipient,"message_id":message_id,"image_generated":bool(image_content)}
 @router.get("/routing",tags=["Bank Intelligence"])
 def routing_list(user:User=Depends(bank_user),db:Session=Depends(get_db)):
     rows=db.query(RoutingDecision,Conversation,Customer).join(Conversation,RoutingDecision.conversation_id==Conversation.id).join(Customer,Conversation.customer_id==Customer.id).order_by(RoutingDecision.created_at.desc()).all()
@@ -484,7 +510,7 @@ def active_chat_reply_provider(db:Session)->str:
 @router.get("/admin/ai-settings",tags=["Administration"])
 def ai_settings(user:User=Depends(admin_user),db:Session=Depends(get_db)):
     selected=active_chat_reply_provider(db)
-    return {"selected_provider":selected,"active":CHAT_REPLY_MODELS[selected],"options":[{"id":key,**value} for key,value in CHAT_REPLY_MODELS.items()],"scope":"Chat replies only","status":"Configured"}
+    return {"selected_provider":selected,"active":CHAT_REPLY_MODELS[selected],"options":[{"id":key,**value} for key,value in CHAT_REPLY_MODELS.items()],"scope":"Chat replies only","status":"Configured","image_generation":{"enabled":image_generation_enabled(db),"provider":"Local ComfyUI","model":settings.comfyui_checkpoint}}
 @router.patch("/admin/ai-settings/chat-reply-model",tags=["Administration"])
 def update_chat_reply_model(payload:ChatReplyModelUpdate,user:User=Depends(admin_user),db:Session=Depends(get_db)):
     setting=db.get(AppSetting,"chat_reply_provider")
@@ -494,3 +520,12 @@ def update_chat_reply_model(payload:ChatReplyModelUpdate,user:User=Depends(admin
     db.add(AuditLog(user_id=user.id,action="CHAT_REPLY_MODEL_CHANGED",entity="app_settings",entity_id="chat_reply_provider",metadata_json={"provider":payload.provider,"model":CHAT_REPLY_MODELS[payload.provider]["model"]}))
     db.commit()
     return {"selected_provider":payload.provider,"active":CHAT_REPLY_MODELS[payload.provider],"scope":"Chat replies only","status":"Configured"}
+@router.patch("/admin/ai-settings/image-generation",tags=["Administration"])
+def update_image_generation(payload:ImageGenerationUpdate,user:User=Depends(admin_user),db:Session=Depends(get_db)):
+    setting=db.get(AppSetting,"email_image_generation_enabled")
+    value="true" if payload.enabled else "false"
+    if setting:setting.value=value
+    else:db.add(AppSetting(key="email_image_generation_enabled",value=value))
+    db.add(AuditLog(user_id=user.id,action="EMAIL_IMAGE_GENERATION_TOGGLED",entity="app_settings",entity_id="email_image_generation_enabled",metadata_json={"enabled":payload.enabled}))
+    db.commit()
+    return {"enabled":payload.enabled,"provider":"Local ComfyUI","model":settings.comfyui_checkpoint}
